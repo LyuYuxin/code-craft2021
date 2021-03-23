@@ -12,7 +12,7 @@ using namespace std;
 
 void read_standard_input();
 
-//优化算法求解过程
+//优化算法求解过程cd
 void process();
 
 void write_standard_output();
@@ -95,10 +95,6 @@ typedef struct node{
 	}
 }S_node;
 
-//todo
-//inline void TransferVM(uint32_t vm_id, uint32_t server_id);
-//inline void TransferVM(uint32_t vm_id, uint32_t server_id, const string& node_name);
-
 
 int32_t N;//可以采购的服务器类型
 int32_t M;//虚拟机类型数量
@@ -108,9 +104,11 @@ vector<S_Server> ServerList;//用于存储所有可买的服务器种类信息
 unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
 vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 vector<S_DayTotalDecisionInfo> Decisions;//所有的决策信息
-unordered_map<uint32_t, uint32_t> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和部署的服务器id
+unordered_map<uint32_t, uint32_t> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和部署的服务器序列号
 unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局虚拟机信息表，记录虚拟机id和对应的虚拟机其他信息
-unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;
+unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
+
+
 class C_BoughtServer {
 public:
 	C_BoughtServer(const S_Server& server) :server_info(server)
@@ -121,6 +119,49 @@ public:
 		seq = purchase_seq_num++;
 	}
 
+	//迁移用
+	inline void deployVM(const S_VM& vm, int vm_id, S_MigrationInfo& one_migration_info){
+		//输出用迁移记录
+		one_migration_info.vm_id = vm_id;
+		one_migration_info.server_seq = seq;
+		one_migration_info.is_double_node = vm.is_double_node;
+
+		//更新全局虚拟机部署表
+		GlobalVMDeployTable.insert(pair<uint32_t, uint32_t>(vm_id, seq));
+		//维护服务器部署信息表
+		S_DeploymentInfo one_deployment_info;
+		one_deployment_info.is_double_node = vm.is_double_node;
+		one_deployment_info.server_seq = seq;
+		one_deployment_info.vm_type = vm.type;
+		//双节点部署
+		if(vm.is_double_node){
+			A.remaining_cpu_num -= vm.cpu_num / 2;
+			A.remaining_memory_num -= vm.memory_num / 2;
+			B.remaining_memory_num -= vm.memory_num / 2;
+			B.remaining_cpu_num -= vm.cpu_num / 2;
+		}
+		//单节点部署
+		else{
+			if((A.remaining_cpu_num >= vm.cpu_num )&& (A.remaining_memory_num >= vm.memory_num)){
+				one_migration_info.node_name = "A";
+				one_deployment_info.node_name = "A";
+				A.remaining_cpu_num -= vm.cpu_num;
+				A.remaining_memory_num -= vm.memory_num;
+			}
+			else if((B.remaining_cpu_num >= vm.cpu_num) && (B.remaining_memory_num >= vm.memory_num)){
+				one_migration_info.node_name = "B";
+				one_deployment_info.node_name = "B";
+				B.remaining_memory_num -= vm.memory_num;
+				B.remaining_cpu_num -= vm.cpu_num;
+			}
+		}
+		assert(A.remaining_cpu_num >= 0);
+		assert(A.remaining_memory_num >= 0);
+		assert(B.remaining_cpu_num >= 0);
+		assert(B.remaining_memory_num >= 0);
+		deployed_vms.insert(pair<uint32_t, S_DeploymentInfo>(vm_id, one_deployment_info));
+	}
+	//正常部署用
 	inline void deployVM(const S_VM& vm, int vm_id, S_DeploymentInfo& one_deployment_info){
 		one_deployment_info.server_seq = seq;
 		one_deployment_info.vm_type = vm.type;
@@ -201,19 +242,39 @@ public:
 		return false;
 	}	
 
-	S_Server server_info;//此服务器的基本信息，暂时用不到
+	S_Server server_info;//此服务器的基本参数
 	S_node A, B;//两个节点的信息
 	uint32_t seq;//此服务器序列号，唯一标识
-	unordered_map<uint32_t, S_DeploymentInfo> deployed_vms;//虚拟机id和对应的部署信息
+	unordered_map<uint32_t, S_DeploymentInfo> deployed_vms;//部署在本服务器上的虚拟机id和对应的部署信息
 	static int32_t purchase_seq_num;//静态成员，用于存储当前已购买服务器总数，也用于给新买的服务器赋予序列号
 
 	//暂时没用
 	static uint32_t total_remaining_cpus;//静态成员，用于存储当前总剩余cpu
 	static uint32_t total_remaining_mems;//静态成员，用于存储当前总剩余内存
 };
-int32_t C_BoughtServer::purchase_seq_num = 0;//初始时，没有任何服务器，编号从0开始，第一台服务器编号为0
+int32_t C_BoughtServer::purchase_seq_num = 0;//初始时，没有任何服务器，序列号从0开始，第一台服务器序列号为0
 
 vector<C_BoughtServer> My_servers;//已购买的服务器列表
+
+//返回当天最大可用迁移次数
+inline int32_t get_max_transfer_num(){
+	size_t num = GlobalVMDeployTable.size();
+	return (int32_t)(num * 5 / 1000);
+}
+
+inline void transfer_vm(uint32_t vm_id, uint32_t server_seq, S_MigrationInfo& one_migration_info){
+	assert(GlobalVMDeployTable[vm_id] < My_servers.size());
+	assert(0 <= server_seq < My_servers.size());
+
+	//原服务器删除此虚拟机
+	My_servers[GlobalVMDeployTable[vm_id]].removeVM(vm_id, GlobalVMRequestInfo[vm_id].type);
+
+	//新服务器增加此虚拟机
+	My_servers[server_seq].deployVM(GlobalVMRequestInfo[vm_id], vm_id, one_migration_info);
+
+}
+
+//生成每一天购买服务器的id，以及序列号跟id之间的映射表
 void server_seq_to_id(const S_DayTotalDecisionInfo& day_decision) {
 	static uint32_t idx = 0;
 	map<string, vector<uint32_t>>::const_iterator it = day_decision.server_bought_kind.begin();
@@ -225,29 +286,6 @@ void server_seq_to_id(const S_DayTotalDecisionInfo& day_decision) {
 		}
 	}
 }
-
-
-
-int main()
-{	
-	//int start = clock();
-	//int end = 0;
-	read_standard_input();
-	//end = clock();
-	//cout<<"read input cost: ";
-	//cout<< (double)(end - start) / CLOCKS_PER_SEC << endl;
-	process();
-	//start = clock();
-	//cout<<"process cost: ";
-	//cout<< (double)(start - end) / CLOCKS_PER_SEC <<endl;
-	write_standard_output();
-	//end = clock();
-	//cout<< "write output cost: ";
-	//cout<< (double)(end - start) / CLOCKS_PER_SEC <<endl;
-	fflush(stdout);
-	return 0;
-}
-
 
 //计算当天最多需要的单节点cpu和mem数量
 inline void check_required_room(const S_DayRequest& day_request, int32_t& required_cpu, int32_t & required_mem, uint32_t cur_idx){
@@ -343,6 +381,30 @@ inline bool first_fit(const S_Request & request, S_DeploymentInfo& one_deploymen
 	
 }
 
+inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deployment_info){
+	if(My_servers.size() == 0)return false;
+		
+	size_t size = My_servers.size();
+	const S_VM& vm = VMList[request.vm_type];
+	int32_t dis = 0;
+	int32_t min_dis = INT32_MAX;
+	int32_t min_idx = 0;
+	for(size_t i = 0; i != size; ++i){
+		//找剩余容量最接近的
+		if(My_servers[i].is_accomodated(vm)){
+			dis = pow((vm.cpu_num - My_servers[i].A.remaining_cpu_num - My_servers[i].B.remaining_cpu_num), 2)+
+					pow((vm.memory_num - My_servers[i].A.remaining_memory_num - My_servers[i].B.remaining_memory_num), 2);
+			if(dis < min_dis){
+				min_dis = dis;
+				min_idx = i;
+			}
+		}
+	}
+	if(min_dis	== INT32_MAX)return false;
+	My_servers[min_idx].deployVM(vm, request.vm_id, one_deployment_info);
+	return true;
+}
+
 void process() {
 	S_DayTotalDecisionInfo day_decision;
 
@@ -366,7 +428,7 @@ void process() {
 
 			//如果是增加虚拟机
 			//如果可以满足条件
-			if (first_fit(Requests[t].day_request[i], one_request_deployment_info)) {
+			if (best_fit(Requests[t].day_request[i], one_request_deployment_info)) {
 				day_decision.request_deployment_info.push_back(one_request_deployment_info);
 				continue;
 			};
@@ -409,7 +471,6 @@ void process() {
 }
 
 
-
 //用于处理输入字符串
 inline vector<string> split( string& line, char pattern) {
 	string::size_type pos;
@@ -433,7 +494,7 @@ inline vector<string> split( string& line, char pattern) {
 
 void read_standard_input() {
 #ifndef SUBMIT
-freopen("C:\\Users\\lvyuxin\\Desktop\\华为软挑\\training-data\\training-2.txt", "r", stdin);
+freopen("./training-2.txt", "r", stdin);
 #endif // !SUBMIT
 
 	
@@ -543,4 +604,26 @@ void write_standard_output() {
 		}
 
 	}
+}
+
+
+
+int main()
+{	
+	//int start = clock();
+	//int end = 0;
+	read_standard_input();
+	//end = clock();
+	//cout<<"read input cost: ";
+	//cout<< (double)(end - start) / CLOCKS_PER_SEC << endl;
+	process();
+	//start = clock();
+	//cout<<"process cost: ";
+	//cout<< (double)(start - end) / CLOCKS_PER_SEC <<endl;
+	write_standard_output();
+	//end = clock();
+	//cout<< "write output cost: ";
+	//cout<< (double)(end - start) / CLOCKS_PER_SEC <<endl;
+	fflush(stdout);
+	return 0;
 }
