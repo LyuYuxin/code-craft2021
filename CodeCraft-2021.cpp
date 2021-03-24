@@ -8,11 +8,17 @@
 #include<cmath>
 #include<time.h>
 #include<cassert>
+#include<algorithm>
+
+//可调参数列表
+
+//最大迁出服务器比例
+const float MAX_MiGRATE_OUT_SERVER_RATIO = 0.5;
+
 using namespace std;
 
 void read_standard_input();
 
-//优化算法求解过程cd
 void process();
 
 void write_standard_output();
@@ -76,7 +82,7 @@ typedef struct DayTotalDecisionInfo{
 	map<string, vector<uint32_t>> server_bought_kind;//购买的不同服务器的个数
 
 	int32_t W;//需要迁移的虚拟机的数量
-	vector<S_MigrationInfo> VM_transfer_record;//虚拟机迁移记录
+	vector<S_MigrationInfo> VM_migrate_vm_record;//虚拟机迁移记录
 
 	vector<S_DeploymentInfo> request_deployment_info;//按序对请求的处理记录
 	DayTotalDecisionInfo(){
@@ -117,8 +123,9 @@ public:
 		A.remaining_memory_num = server.memory_num / 2;
 		B = A;
 		seq = purchase_seq_num++;
+		resource_used_rate = 0.f;
 	}
-
+	
 	//迁移用
 	inline void deployVM(const S_VM& vm, int vm_id, S_MigrationInfo& one_migration_info){
 		//输出用迁移记录
@@ -161,6 +168,7 @@ public:
 		assert(B.remaining_memory_num >= 0);
 		deployed_vms.insert(pair<uint32_t, S_DeploymentInfo>(vm_id, one_deployment_info));
 	}
+	
 	//正常部署用
 	inline void deployVM(const S_VM& vm, int vm_id, S_DeploymentInfo& one_deployment_info){
 		one_deployment_info.server_seq = seq;
@@ -197,6 +205,7 @@ public:
 		assert(B.remaining_memory_num >= 0);
 		deployed_vms.insert(pair<uint32_t, S_DeploymentInfo>(vm_id, one_deployment_info));
 	} 
+	
 	inline void removeVM(uint32_t vm_id, const string & vm_type){
 		S_DeploymentInfo deployment_info = deployed_vms[vm_id];
 		S_VM vm_info = VMList[vm_type];
@@ -223,7 +232,8 @@ public:
 		deployed_vms.erase(vm_id);
 		GlobalVMDeployTable.erase(vm_id);
 	}
-	bool is_accomodated(const S_VM& vm){
+	
+	bool is_deployable(const S_VM& vm)const{
 		if(vm.is_double_node){
 			if((A.remaining_cpu_num >= vm.cpu_num / 2) &&
 			 (B.remaining_cpu_num >= vm.cpu_num / 2) && 
@@ -242,9 +252,22 @@ public:
 		return false;
 	}	
 
+	bool operator<(C_BoughtServer& bought_server){
+		return this->get_cpu_mem_used_rate() < bought_server.get_cpu_mem_used_rate();
+	}
+
+	inline float get_cpu_mem_used_rate(){
+		float cpu_used_rate = ((float)(server_info.cpu_num - A.remaining_cpu_num - B.remaining_cpu_num)) / server_info.cpu_num;
+		float mem_used_rate = ((float)(server_info.memory_num - A.remaining_memory_num - B.remaining_memory_num)) / server_info.memory_num;
+		float total_rate = cpu_used_rate + mem_used_rate;
+		resource_used_rate = total_rate;
+		return total_rate;
+	}
+
 	S_Server server_info;//此服务器的基本参数
 	S_node A, B;//两个节点的信息
 	uint32_t seq;//此服务器序列号，唯一标识
+	float resource_used_rate;//cpu和mem总使用率
 	unordered_map<uint32_t, S_DeploymentInfo> deployed_vms;//部署在本服务器上的虚拟机id和对应的部署信息
 	static int32_t purchase_seq_num;//静态成员，用于存储当前已购买服务器总数，也用于给新买的服务器赋予序列号
 
@@ -257,21 +280,94 @@ int32_t C_BoughtServer::purchase_seq_num = 0;//初始时，没有任何服务器
 vector<C_BoughtServer> My_servers;//已购买的服务器列表
 
 //返回当天最大可用迁移次数
-inline int32_t get_max_transfer_num(){
+inline int32_t get_max_migrate_num(){
 	size_t num = GlobalVMDeployTable.size();
 	return (int32_t)(num * 5 / 1000);
 }
 
-inline void transfer_vm(uint32_t vm_id, uint32_t server_seq, S_MigrationInfo& one_migration_info){
+//基本迁移操作
+inline void migrate_vm(uint32_t vm_id, uint32_t in_server_seq, S_MigrationInfo& one_migration_info){
+	assert(GlobalVMDeployTable.find(vm_id) != GlobalVMDeployTable.end());
 	assert(GlobalVMDeployTable[vm_id] < My_servers.size());
-	assert(0 <= server_seq < My_servers.size());
+	assert(0 <= in_server_seq < My_servers.size());
 
 	//原服务器删除此虚拟机
 	My_servers[GlobalVMDeployTable[vm_id]].removeVM(vm_id, GlobalVMRequestInfo[vm_id].type);
 
 	//新服务器增加此虚拟机
-	My_servers[server_seq].deployVM(GlobalVMRequestInfo[vm_id], vm_id, one_migration_info);
+	My_servers[in_server_seq].deployVM(GlobalVMRequestInfo[vm_id], vm_id, one_migration_info);
 
+}
+
+//排序函数
+bool com( C_BoughtServer& A,  C_BoughtServer& B){
+	return A < B;
+}
+
+//迁移主流程，适配最佳适应算法，将服务器资源利用率拉满
+void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
+
+	int32_t remaining_migrate_vm_num = get_max_migrate_num();//当天可用迁移量
+
+	if(remaining_migrate_vm_num == 0) return;
+
+
+	//复制用于对服务器使用率进行排序的信息
+	vector<C_BoughtServer> tmp_my_servers(My_servers);
+	sort(tmp_my_servers.begin(), tmp_my_servers.end(), com);	
+
+	//查看的迁出服务器窗口大小
+	int32_t max_out = (int32_t)(My_servers.size() * MAX_MiGRATE_OUT_SERVER_RATIO);
+	if(max_out < 1)return;
+	int32_t out = 0;
+	//迁移主循环
+	do{	
+		//迁出服务器信息
+		uint32_t least_used_server_seq = tmp_my_servers[out].seq;
+		C_BoughtServer &out_server = My_servers[least_used_server_seq];
+
+		//遍历当前迁出服务器所有已有的虚拟机
+		unordered_map<uint32_t, S_DeploymentInfo>::const_iterator it = out_server.deployed_vms.begin();		
+		unordered_map<uint32_t, S_DeploymentInfo>::const_iterator end = out_server.deployed_vms.end();
+		for(; it != end;){
+			const S_VM & vm =  VMList[it->second.vm_type];
+		
+			//使用率高的服务器剩余容量与当前迁出虚拟机的距离
+			uint32_t min_dis = UINT32_MAX;
+			int32_t min_idx = 0;
+
+			//i只是当前迁入服务器遍历序号，并不是服务器序列号
+			for(int32_t in = tmp_my_servers.size() - 1; in > out; --in){
+				uint32_t most_used_server_seq = tmp_my_servers[in].seq;
+				const C_BoughtServer &in_server = My_servers[most_used_server_seq];
+
+				if(in_server.is_deployable(vm)){
+					uint32_t dis = (in_server.A.remaining_cpu_num + in_server.B.remaining_cpu_num - vm.cpu_num) + (in_server.A.remaining_memory_num + in_server.B.remaining_memory_num - vm.memory_num);
+					if(dis < min_dis){
+						min_dis = dis;
+						min_idx = in;
+					}	
+				}
+			}
+
+			if(min_dis != UINT32_MAX){//一次成功迁移
+				S_MigrationInfo one_migration_info;
+				unordered_map<uint32_t, S_DeploymentInfo>::const_iterator tmp_it = it;
+				++it;
+				migrate_vm(tmp_it->first, tmp_my_servers[min_idx].seq, one_migration_info);
+				day_decision.VM_migrate_vm_record.push_back(one_migration_info);
+				--remaining_migrate_vm_num;
+			}
+
+			//最好是能把使用率低的服务器腾出来，如果腾不出来，就要考虑换次低的服务器进行尝试
+			else{
+				++it;
+			}
+			if(remaining_migrate_vm_num == 0)break;
+		}
+		if(remaining_migrate_vm_num == 0)break;
+		++out;
+	}while(out <= max_out);
 }
 
 //生成每一天购买服务器的id，以及序列号跟id之间的映射表
@@ -288,6 +384,7 @@ void server_seq_to_id(const S_DayTotalDecisionInfo& day_decision) {
 }
 
 //计算当天最多需要的单节点cpu和mem数量
+//暂时没用
 inline void check_required_room(const S_DayRequest& day_request, int32_t& required_cpu, int32_t & required_mem, uint32_t cur_idx){
 	uint32_t total_request_cpu = 0;
 	uint32_t total_request_mem = 0;
@@ -322,6 +419,29 @@ inline void check_required_room(const S_DayRequest& day_request, int32_t& requir
 	required_cpu = max_cpu;
 }
 
+//找到使用率最低且不为0的服务器
+ uint32_t get_least_used_server(){
+	size_t size = My_servers.size();
+	float min_used_rate = 3.0f;
+	size_t min_idx = 0;	
+	for(size_t i = 0; i != size; ++i){
+		float cpu_used_rate, mem_used_rate, total_rate;
+		const S_Server& server_info =  My_servers[i].server_info;
+		cpu_used_rate = ((float)(server_info.cpu_num - My_servers[i].A.remaining_cpu_num - My_servers[i].B.remaining_cpu_num)) / server_info.cpu_num;
+		mem_used_rate = ((float)(server_info.memory_num - My_servers[i].A.remaining_memory_num - My_servers[i].B.remaining_memory_num)) / server_info.memory_num;
+		total_rate = cpu_used_rate + mem_used_rate;
+
+		//不空置的服务器迁移才有意义
+		if(total_rate > 0 and min_used_rate > total_rate){
+			min_used_rate = total_rate;
+			min_idx = i;
+			}
+	}
+	assert(0.f < min_used_rate < 2.0f);
+	return min_idx;
+}
+
+//找到一台合适购买的服务器
 inline const S_Server& evaluate_servers(const int32_t required_cpu, const int32_t required_mem){
 	size_t size = ServerList.size();
 	int min_idx = 0;
@@ -337,7 +457,7 @@ inline const S_Server& evaluate_servers(const int32_t required_cpu, const int32_
 	return best_server;
 }
 
-//购买合适的服务器
+//购买服务器
 inline vector<C_BoughtServer> buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<uint32_t>>& bought_server_kind) {
 	vector<C_BoughtServer> bought_servers;
 	do {
@@ -363,8 +483,6 @@ inline vector<C_BoughtServer> buy_server(int32_t required_cpu, int32_t required_
 	return bought_servers;
 }
 
-//使用ff算法处理请求主流程
-//v1.0 不考虑迁移
 inline bool first_fit(const S_Request & request, S_DeploymentInfo& one_deployment_info){
 	if(My_servers.size() == 0)return false;
 	
@@ -372,7 +490,7 @@ inline bool first_fit(const S_Request & request, S_DeploymentInfo& one_deploymen
 	const S_VM& vm = VMList[request.vm_type];
 	for(size_t i = 0; i != size; ++ i){
 		
-		if(My_servers[i].is_accomodated(vm)){
+		if(My_servers[i].is_deployable(vm)){
 			My_servers[i].deployVM(vm, request.vm_id, one_deployment_info);
 			return true;
 		}
@@ -391,7 +509,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 	int32_t min_idx = 0;
 	for(size_t i = 0; i != size; ++i){
 		//找剩余容量最接近的
-		if(My_servers[i].is_accomodated(vm)){
+		if(My_servers[i].is_deployable(vm)){
 			dis = pow((vm.cpu_num - My_servers[i].A.remaining_cpu_num - My_servers[i].B.remaining_cpu_num), 2)+
 					pow((vm.memory_num - My_servers[i].A.remaining_memory_num - My_servers[i].B.remaining_memory_num), 2);
 			if(dis < min_dis){
@@ -405,23 +523,49 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 	return true;
 }
 
+inline bool worst_fit(const S_Request & request, S_DeploymentInfo & one_deployment_info){
+	if(My_servers.size() == 0)return false;
+		
+	size_t size = My_servers.size();
+	const S_VM& vm = VMList[request.vm_type];
+	int32_t dis = 0;
+	int32_t max_dis = INT32_MIN;
+	int32_t max_idx = 0;
+	for(size_t i = 0; i != size; ++i){
+		//找剩余容量最不接近的
+		if(My_servers[i].is_deployable(vm)){
+			dis = pow((vm.cpu_num - My_servers[i].A.remaining_cpu_num - My_servers[i].B.remaining_cpu_num), 2)+
+					pow((vm.memory_num - My_servers[i].A.remaining_memory_num - My_servers[i].B.remaining_memory_num), 2);
+			if(dis > max_dis){
+				max_dis = dis;
+				max_idx = i;
+			}
+		}
+	}
+	if(max_dis	== INT32_MIN)return false;
+	My_servers[max_idx].deployVM(vm, request.vm_id, one_deployment_info);
+	return true;
+}
+
+
 void process() {
 	S_DayTotalDecisionInfo day_decision;
 
 	for (int32_t t = 0; t != T; ++t) {
-#ifndef SUBMIT
-		cout << "开始处理第" << t << "天的请求" << endl;
-#endif // #ifndef SUBMIT
-
 		S_DayTotalDecisionInfo day_decision;
 
+		//对存量虚拟机进行迁移
+		full_loaded_migrate_vm(day_decision);
+		day_decision.W = day_decision.VM_migrate_vm_record.size();
+
 		for (int32_t i = 0; i != Requests[t].request_num; ++i) {
-			//不断使用FF算法处理请求，直至已有服务器无法满足
+			//不断处理请求，直至已有服务器无法满足
 			S_DeploymentInfo one_request_deployment_info;
 
-			//对于删除的情况
+			//删除虚拟机
 			if (!Requests[t].day_request[i].is_add) {
-				My_servers[GlobalVMDeployTable[Requests[t].day_request[i].vm_id]].removeVM(
+				int32_t cur_server_seq = GlobalVMDeployTable[Requests[t].day_request[i].vm_id];
+				My_servers[cur_server_seq].removeVM(
 					Requests[t].day_request[i].vm_id, Requests[t].day_request[i].vm_type);
 				continue;
 			}
@@ -439,21 +583,19 @@ void process() {
 			required_mem = vm.memory_num;
 			required_cpu = vm.cpu_num;
 			//根据所需cpu and mem,购买服务器
-			vector<C_BoughtServer> bought_servers = buy_server(required_cpu, required_mem, day_decision.server_bought_kind);
+			vector<C_BoughtServer> bought_servers;
+			//这里不调用copy构造函数
+			bought_servers = buy_server(required_cpu, required_mem, day_decision.server_bought_kind);
 			My_servers.insert(My_servers.end(), bought_servers.begin(), bought_servers.end());
-
-
-			//todo
-			//记录迁移日志
 
 			--i;//购买服务器后重新处理当前请求
 
 		}
 		day_decision.Q = day_decision.server_bought_kind.size();
-		Decisions.push_back(day_decision);
+		day_decision.W = day_decision.VM_migrate_vm_record.size();
 		server_seq_to_id(day_decision);
-
 		
+		Decisions.push_back(day_decision);
 	}
 	/*
 	freopen("bought_server_ids.txt", "w", stdout);
@@ -475,8 +617,6 @@ void process() {
 inline vector<string> split( string& line, char pattern) {
 	string::size_type pos;
 	vector<string> results;
-	//line.erase(0, 1);
-	//line.erase(line.size() - 1, 1);
 
 	line[line.size() - 1] = pattern;
 	string::size_type size = line.size();
@@ -494,7 +634,7 @@ inline vector<string> split( string& line, char pattern) {
 
 void read_standard_input() {
 #ifndef SUBMIT
-freopen("./training-2.txt", "r", stdin);
+freopen("./training-1.txt", "r", stdin);
 #endif // !SUBMIT
 
 	
@@ -573,7 +713,9 @@ freopen("./training-2.txt", "r", stdin);
 }
 
 void write_standard_output() {
-
+#ifndef SUBMIT
+	freopen("out.txt", "w", stdout);
+#endif
 	for (int32_t i = 0; i != T; ++i) {
 		cout << "(purchase, " << Decisions[i].Q << ")" << endl;
 		for (map<string, vector<uint32_t>>::iterator iter = Decisions[i].server_bought_kind.begin(); iter != Decisions[i].server_bought_kind.end(); ++iter) {
@@ -582,12 +724,12 @@ void write_standard_output() {
 
 		cout << "(migration, " << Decisions[i].W << ")" << endl;
 		for (int32_t j = 0; j != Decisions[i].W; ++j) {
-			if (Decisions[i].VM_transfer_record[j].is_double_node) {
-				cout << "(" << Decisions[i].VM_transfer_record[j].vm_id << ", " << Decisions[i].VM_transfer_record[j].server_seq << ")" << endl;
+			if (Decisions[i].VM_migrate_vm_record[j].is_double_node) {
+				cout << "(" << Decisions[i].VM_migrate_vm_record[j].vm_id << ", " << GlobalServerSeq2IdMapTable[Decisions[i].VM_migrate_vm_record[j].server_seq] << ")" << endl;
 			}
 			else {
-				cout << "(" << Decisions[i].VM_transfer_record[j].vm_id << ", " << Decisions[i].VM_transfer_record[j].server_seq <<
-					", " << Decisions[i].VM_transfer_record[j].node_name << ")" << endl;
+				cout << "(" << Decisions[i].VM_migrate_vm_record[j].vm_id << ", " << GlobalServerSeq2IdMapTable[Decisions[i].VM_migrate_vm_record[j].server_seq] <<
+					", " << Decisions[i].VM_migrate_vm_record[j].node_name << ")" << endl;
 			}
 		}
 
@@ -605,7 +747,6 @@ void write_standard_output() {
 
 	}
 }
-
 
 
 int main()
