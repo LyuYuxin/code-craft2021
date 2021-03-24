@@ -10,10 +10,17 @@
 #include<cassert>
 #include<algorithm>
 
-//可调参数列表
 
+enum E_Deploy_status{
+	dep_No = -1, dep_A, dep_B, dep_Both
+};
+
+//可调参数列表
 //最大迁出服务器比例
 const float MAX_MiGRATE_OUT_SERVER_RATIO = 0.3;
+//计算平衡分数用
+const float BIAS = 20.0f;
+
 
 using namespace std;
 
@@ -107,6 +114,7 @@ typedef struct node{
 int32_t N;//可以采购的服务器类型
 int32_t M;//虚拟机类型数量
 int32_t T;//T天
+float GLOBAL_BALANCE_SCORE;//根据所有虚拟机请求得到的内存-核数比例
 
 vector<S_Server> ServerList;//用于存储所有可买的服务器种类信息
 unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
@@ -115,6 +123,20 @@ vector<S_DayTotalDecisionInfo> Decisions;//所有的决策信息
 unordered_map<uint32_t, uint32_t> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和部署的服务器序列号
 unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局虚拟机信息表，记录虚拟机id和对应的虚拟机其他信息
 unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
+
+
+float get_global_balance_score(){
+	uint32_t cpu_num = 0;
+	uint32_t mem_num = 0;
+	for(int t = 0; t != T; ++t){
+		for(int i = 0; i != Requests[t].request_num; ++i){
+			cpu_num += VMList[Requests[t].day_request[i].vm_type].cpu_num;
+			mem_num += VMList[Requests[t].day_request[i].vm_type].memory_num;
+		}
+	}
+	float score = (float)(cpu_num) / mem_num;
+	return score;
+}
 
 
 class C_BoughtServer {
@@ -129,7 +151,7 @@ public:
 	}
 	
 	//迁移用
-	inline void deployVM(const S_VM& vm, int vm_id, S_MigrationInfo& one_migration_info){
+	inline void deployVM(E_Deploy_status status, const S_VM& vm, int vm_id, S_MigrationInfo& one_migration_info){
 		//输出用迁移记录
 		one_migration_info.vm_id = vm_id;
 		one_migration_info.server_seq = seq;
@@ -142,62 +164,60 @@ public:
 		one_deployment_info.is_double_node = vm.is_double_node;
 		one_deployment_info.server_seq = seq;
 		one_deployment_info.vm_type = vm.type;
-		//双节点部署
-		if(vm.is_double_node){
-			A.remaining_cpu_num -= vm.half_cpu_num;
-			A.remaining_memory_num -= vm.half_mem_num;
-			B.remaining_memory_num -= vm.half_mem_num;
-			B.remaining_cpu_num -= vm.half_cpu_num;
-		}
-		//单节点部署
-		else{
-			if((A.remaining_cpu_num >= vm.cpu_num )&& (A.remaining_memory_num >= vm.memory_num)){
-				one_migration_info.node_name = "A";
+
+		switch(status){
+			case dep_Both:
+				A.remaining_cpu_num -= vm.half_cpu_num;
+				A.remaining_memory_num -= vm.half_mem_num;
+				B.remaining_memory_num -= vm.half_mem_num;
+				B.remaining_cpu_num -= vm.half_cpu_num;
+				break;
+			case dep_A:
 				one_deployment_info.node_name = "A";
+				one_migration_info.node_name = "A";
 				A.remaining_cpu_num -= vm.cpu_num;
 				A.remaining_memory_num -= vm.memory_num;
-			}
-			else if((B.remaining_cpu_num >= vm.cpu_num) && (B.remaining_memory_num >= vm.memory_num)){
-				one_migration_info.node_name = "B";
+				break;
+			case dep_B:
 				one_deployment_info.node_name = "B";
+				one_migration_info.node_name = "B";
 				B.remaining_memory_num -= vm.memory_num;
 				B.remaining_cpu_num -= vm.cpu_num;
-			}
-		}
+
+
 		assert(A.remaining_cpu_num >= 0);
 		assert(A.remaining_memory_num >= 0);
 		assert(B.remaining_cpu_num >= 0);
 		assert(B.remaining_memory_num >= 0);
 		deployed_vms.insert(pair<uint32_t, S_DeploymentInfo>(vm_id, one_deployment_info));
 	}
-	
+	}
 	//正常部署用
-	inline void deployVM(const S_VM& vm, int vm_id, S_DeploymentInfo& one_deployment_info){
+	inline void deployVM(E_Deploy_status status, const S_VM& vm, int vm_id, S_DeploymentInfo& one_deployment_info){
+
 		one_deployment_info.server_seq = seq;
 		one_deployment_info.vm_type = vm.type;
 		one_deployment_info.is_double_node = vm.is_double_node;
 		//更新全局虚拟机部署表
 		GlobalVMDeployTable.insert(pair<uint32_t, uint32_t>(vm_id, seq));
-
-		//双节点部署
-		if(vm.is_double_node){
-			A.remaining_cpu_num -= vm.half_cpu_num;
-			A.remaining_memory_num -= vm.half_mem_num;
-			B.remaining_memory_num -= vm.half_mem_num;
-			B.remaining_cpu_num -= vm.half_cpu_num;
-		}
-		//单节点部署
-		else{
-			if((A.remaining_cpu_num >= vm.cpu_num )&& (A.remaining_memory_num >= vm.memory_num)){
+		
+		switch(status){
+			case dep_Both:
+				A.remaining_cpu_num -= vm.half_cpu_num;
+				A.remaining_memory_num -= vm.half_mem_num;
+				B.remaining_memory_num -= vm.half_mem_num;
+				B.remaining_cpu_num -= vm.half_cpu_num;
+				break;
+			case dep_A:
 				one_deployment_info.node_name = "A";
 				A.remaining_cpu_num -= vm.cpu_num;
 				A.remaining_memory_num -= vm.memory_num;
-			}
-			else if((B.remaining_cpu_num >= vm.cpu_num) && (B.remaining_memory_num >= vm.memory_num)){
+				break;
+			case dep_B:
 				one_deployment_info.node_name = "B";
 				B.remaining_memory_num -= vm.memory_num;
 				B.remaining_cpu_num -= vm.cpu_num;
-			}
+
 		}
 		assert(A.remaining_cpu_num >= 0);
 		assert(A.remaining_memory_num >= 0);
@@ -233,21 +253,47 @@ public:
 		GlobalVMDeployTable.erase(vm_id);
 	}
 	
-	bool is_deployable(const S_VM& vm)const{
+	E_Deploy_status is_deployable(const S_VM& vm)const{
 		if(vm.is_double_node){
-			return (A.remaining_cpu_num >= vm.half_cpu_num) &&
+			if((A.remaining_cpu_num >= vm.half_cpu_num) &&
 			 (B.remaining_cpu_num >= vm.half_cpu_num) && 
 			 (A.remaining_memory_num >= vm.half_mem_num) &&
-			  (B.remaining_memory_num >= vm.half_mem_num);
+			  (B.remaining_memory_num >= vm.half_mem_num)){
+				  return dep_Both;
+			  }
 		}
 		else{
-			return ((A.remaining_memory_num >= vm.memory_num) && (A.remaining_cpu_num >= vm.cpu_num))
-			 or
-			((B.remaining_memory_num >= vm.memory_num) && (B.remaining_cpu_num >= vm.cpu_num));
-
+			bool a = false;
+			bool b = false;
+			if (((A.remaining_memory_num >= vm.memory_num) && (A.remaining_cpu_num >= vm.cpu_num))){
+				a = true; 
+			}
+			                 9
+			if(((B.remaining_memory_num >= vm.memory_num) && (B.remaining_cpu_num >= vm.cpu_num))){
+				b = true;
+			}
+			if(!a and !b){
+				return dep_No;
+			}
+			if(!a and b){
+				return dep_B;
+			}
+			if(a and !b){
+				return dep_A;
+			}
+			if(a and b){
+			//计算A若部署后的core
+				float score_A = calculate_node_bs(A.remaining_memory_num - vm.memory_num, A.remaining_cpu_num - vm.cpu_num);
+				float score_B = calculate_node_bs(B.remaining_memory_num - vm.memory_num, B.remaining_cpu_num - vm.cpu_num);
+				return score_A > score_B ? dep_B : dep_A;
+			}
 		}
-		return false;
+		return dep_No;
 	}	
+
+	static float calculate_node_bs(float m, float c){
+		return abs((m + (BIAS * GLOBAL_BALANCE_SCORE)) / ((c + BIAS) * GLOBAL_BALANCE_SCORE) - 1);
+	}
 
 	bool operator<(C_BoughtServer& bought_server){
 		return this->get_cpu_mem_used_rate() < bought_server.get_cpu_mem_used_rate();
@@ -272,9 +318,13 @@ public:
 	static uint32_t total_remaining_cpus;//静态成员，用于存储当前总剩余cpu
 	static uint32_t total_remaining_mems;//静态成员，用于存储当前总剩余内存
 };
+
+
 int32_t C_BoughtServer::purchase_seq_num = 0;//初始时，没有任何服务器，序列号从0开始，第一台服务器序列号为0
 
 vector<C_BoughtServer> My_servers;//已购买的服务器列表
+
+
 
 //返回当天最大可用迁移次数
 inline int32_t get_max_migrate_num(){
@@ -283,7 +333,7 @@ inline int32_t get_max_migrate_num(){
 }
 
 //基本迁移操作
-inline void migrate_vm(uint32_t vm_id, uint32_t in_server_seq, S_MigrationInfo& one_migration_info){
+inline void migrate_vm(E_Deploy_status status ,uint32_t vm_id, uint32_t in_server_seq, S_MigrationInfo& one_migration_info){
 	// assert(GlobalVMDeployTable.find(vm_id) != GlobalVMDeployTable.end());
 	// assert(GlobalVMDeployTable[vm_id] < My_servers.size());
 	// assert(0 <= in_server_seq < My_servers.size());
@@ -292,7 +342,7 @@ inline void migrate_vm(uint32_t vm_id, uint32_t in_server_seq, S_MigrationInfo& 
 	My_servers[GlobalVMDeployTable[vm_id]].removeVM(vm_id, GlobalVMRequestInfo[vm_id].type);
 
 	//新服务器增加此虚拟机
-	My_servers[in_server_seq].deployVM(GlobalVMRequestInfo[vm_id], vm_id, one_migration_info);
+	My_servers[in_server_seq].deployVM(status, GlobalVMRequestInfo[vm_id], vm_id, one_migration_info);
 
 }
 
@@ -342,12 +392,14 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 			min_dis = UINT32_MAX;
 			min_idx = 0;
 
+			E_Deploy_status stat;
 			//i只是当前迁入服务器遍历序号，并不是服务器序列号
 			for(int32_t in = tmp_my_servers.size() - 1; in > out; --in){
 				uint32_t most_used_server_seq = tmp_my_servers[in].seq;
 				const C_BoughtServer &in_server = My_servers[most_used_server_seq];
 
-				if(in_server.is_deployable(vm)){
+				stat = in_server.is_deployable(vm);
+				if(stat != dep_No){
 					uint32_t dis = (in_server.A.remaining_cpu_num + in_server.B.remaining_cpu_num - vm.cpu_num) + (in_server.A.remaining_memory_num + in_server.B.remaining_memory_num - vm.memory_num);
 					
 					min_dis = dis < min_dis ? dis: min_dis;
@@ -358,7 +410,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 			if(min_dis != UINT32_MAX){//一次成功迁移
 				unordered_map<uint32_t, S_DeploymentInfo>::const_iterator tmp_it = it;
 				++it;
-				migrate_vm(tmp_it->first, tmp_my_servers[min_idx].seq, one_migration_info);
+				migrate_vm(stat, tmp_it->first, tmp_my_servers[min_idx].seq, one_migration_info);
 				day_decision.VM_migrate_vm_record.push_back(one_migration_info);
 				
 				if(--remaining_migrate_vm_num == 0)break;
@@ -483,8 +535,9 @@ inline bool first_fit(const S_Request & request, S_DeploymentInfo& one_deploymen
 	const S_VM& vm = VMList[request.vm_type];
 	for(size_t i = 0; i != size; ++ i){
 		
-		if(My_servers[i].is_deployable(vm)){
-			My_servers[i].deployVM(vm, request.vm_id, one_deployment_info);
+		E_Deploy_status stat = My_servers[i].is_deployable(vm);
+		if(stat != dep_No){
+			My_servers[i].deployVM(stat, vm, request.vm_id, one_deployment_info);
 			return true;
 		}
 	}
@@ -500,9 +553,11 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 	int32_t dis = 0;
 	int32_t min_dis = INT32_MAX;
 	int32_t min_idx = 0;
+	E_Deploy_status stat;
 	for(size_t i = 0; i != size; ++i){
 		//找剩余容量最接近的
-		if(My_servers[i].is_deployable(vm)){
+		stat = My_servers[i].is_deployable(vm);
+		if(stat != dep_No){
 			dis = pow((vm.cpu_num - My_servers[i].A.remaining_cpu_num - My_servers[i].B.remaining_cpu_num), 2)+
 					pow((vm.memory_num - My_servers[i].A.remaining_memory_num - My_servers[i].B.remaining_memory_num), 2);
 			min_dis = dis < min_dis ? dis: min_dis;
@@ -510,7 +565,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		}
 	}
 	if(min_dis	== INT32_MAX)return false;
-	My_servers[min_idx].deployVM(vm, request.vm_id, one_deployment_info);
+	My_servers[min_idx].deployVM(stat, vm, request.vm_id, one_deployment_info);
 	return true;
 }
 
@@ -522,9 +577,11 @@ inline bool worst_fit(const S_Request & request, S_DeploymentInfo & one_deployme
 	int32_t dis = 0;
 	int32_t max_dis = INT32_MIN;
 	int32_t max_idx = 0;
+	E_Deploy_status stat;
 	for(size_t i = 0; i != size; ++i){
 		//找剩余容量最不接近的
-		if(My_servers[i].is_deployable(vm)){
+		stat = My_servers[i].is_deployable(vm);
+		if(stat != dep_No){
 			dis = pow((vm.cpu_num - My_servers[i].A.remaining_cpu_num - My_servers[i].B.remaining_cpu_num), 2)+
 					pow((vm.memory_num - My_servers[i].A.remaining_memory_num - My_servers[i].B.remaining_memory_num), 2);
 			if(dis > max_dis){
@@ -534,18 +591,18 @@ inline bool worst_fit(const S_Request & request, S_DeploymentInfo & one_deployme
 		}
 	}
 	if(max_dis	== INT32_MIN)return false;
-	My_servers[max_idx].deployVM(vm, request.vm_id, one_deployment_info);
+	My_servers[max_idx].deployVM(stat, vm, request.vm_id, one_deployment_info);
 	return true;
 }
 
 
 void process() {
-
+	GLOBAL_BALANCE_SCORE = get_global_balance_score();
 	for (int32_t t = 0; t != T; ++t) {
 		S_DayTotalDecisionInfo day_decision;
 
 		//对存量虚拟机进行迁移
-		full_loaded_migrate_vm(day_decision);
+		//full_loaded_migrate_vm(day_decision);
 		day_decision.W = day_decision.VM_migrate_vm_record.size();
 		
 		//不断处理请求，直至已有服务器无法满足
