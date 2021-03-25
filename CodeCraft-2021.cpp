@@ -19,7 +19,7 @@ enum E_Deploy_status{
 
 //可调参数列表
 //最大迁出服务器比例
-const float MAX_MiGRATE_OUT_SERVER_RATIO = 0.3;
+const float MAX_MiGRATE_OUT_SERVER_RATIO = 0.25;
 //计算平衡分数用
 const float BIAS = 100.0f;
 
@@ -293,7 +293,7 @@ public:
 			#ifdef BALANCE_NODE
 				float score_A = calculate_node_bs(A.remaining_memory_num - vm.memory_num, A.remaining_cpu_num - vm.cpu_num);
 				float score_B = calculate_node_bs(B.remaining_memory_num - vm.memory_num, B.remaining_cpu_num - vm.cpu_num);
-				return score_A > score_B ? dep_B : dep_A;
+				return score_A > score_B ? dep_A : dep_B;
 			#endif
 			
 				return dep_A;
@@ -391,55 +391,48 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 		unordered_map<uint32_t, S_DeploymentInfo>::const_iterator it = out_server.deployed_vms.begin();		
 		unordered_map<uint32_t, S_DeploymentInfo>::const_iterator end = out_server.deployed_vms.end();
 
-		//初始化使用率高的服务器剩余容量与当前迁出虚拟机需要容量的距离
-		uint32_t min_dis = UINT32_MAX;
-		int32_t min_idx = 0;
+		// //初始化使用率高的服务器剩余容量与当前迁出虚拟机需要容量的距离
+		// uint32_t min_dis = UINT32_MAX;
+		// int32_t min_idx = 0;
 
 		for(; it != end;){
 			const S_VM & vm =  VMList[it->second.vm_type];
 		
-			min_dis = UINT32_MAX;
-			min_idx = 0;
-
-			E_Deploy_status stat;
+			E_Deploy_status stat = dep_No;
 			//i只是当前迁入服务器遍历序号，并不是服务器序列号
 			for(int32_t in = tmp_my_servers.size() - 1; in > out; --in){
+				
+				//把当前虚拟机迁移到当前服务器上
 				uint32_t most_used_server_seq = tmp_my_servers[in].seq;
 				const C_BoughtServer &in_server = My_servers[most_used_server_seq];
-
 				stat = in_server.is_deployable(vm);
-				if(stat != dep_No){
-					uint32_t dis = (in_server.A.remaining_cpu_num + in_server.B.remaining_cpu_num - vm.cpu_num) + (in_server.A.remaining_memory_num + in_server.B.remaining_memory_num - vm.memory_num);
-					
-					if(dis < min_dis){
-						min_dis = dis;
-						min_idx = in;
-					}
-				}
-			}
-
-			if(min_dis != UINT32_MAX){//一次成功迁移
-				unordered_map<uint32_t, S_DeploymentInfo>::const_iterator tmp_it = it;
-				++it;
-
-				stat = My_servers[tmp_my_servers[min_idx].seq].is_deployable(vm);
-				assert(stat != dep_No);
-
-				//迁移信息记录
-				S_MigrationInfo one_migration_info;
-				migrate_vm(stat, tmp_it->first, tmp_my_servers[min_idx].seq, one_migration_info);
-				day_decision.VM_migrate_vm_record.push_back(one_migration_info);
 				
-				if(--remaining_migrate_vm_num == 0)return;
+				if(stat == dep_No){
+					continue;
+				}
+
+				else{
+				//一次成功迁移
+					unordered_map<uint32_t, S_DeploymentInfo>::const_iterator tmp_it = it;
+					++it;
+					//迁移信息记录
+					S_MigrationInfo one_migration_info;
+					migrate_vm(stat, tmp_it->first, most_used_server_seq, one_migration_info);
+					day_decision.VM_migrate_vm_record.push_back(one_migration_info);
+					if(--remaining_migrate_vm_num == 0)return;
+					break;
+					
+				}
+
 
 			}
+			if(stat != dep_No)continue;
 			//最好是能把使用率低的服务器腾出来，如果腾不出来，就要考虑换次低的服务器进行尝试
-			else ++it;
+			++it;
 		}
 		++out;
 	}while(out != max_out);
 }
-
 //生成每一天购买服务器的id，以及序列号跟id之间的映射表
 void server_seq_to_id(const S_DayTotalDecisionInfo& day_decision) {
 	static uint32_t idx = 0;
