@@ -2,7 +2,7 @@
 #define SUBMIT//是否提交
 //#define SIMILAR_NODE
 //#define BALANCE_NODE
-#define MIGRATE//原始迁移
+//#define MIGRATE//原始迁移
 #define EARLY_STOPPING//迁移时短路判断 todo
 
 //#define BUY_SERVER_GREEDY
@@ -23,14 +23,18 @@ enum E_Deploy_status{
 };
 
 //可调参数列表
+
 //最大迁出服务器比例
 const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.7;
 
+//购买服务器时的购买-维护参数
 const float TOTAL_COST_RATIO = 1.0f;
 const float BUY_SERVER_MAINTAINANCE_COST_RATIO = 1.0f;
-const float BUY_SERVER_PURCHASE_COST_RATIO = 40.0f;
-//计算平衡分数用
-const float BIAS = 100.0f;
+const float BUY_SERVER_PURCHASE_COST_RATIO = 40.0f; 
+
+//部署时服务器利用率影响因子
+const float SERVER_USAGE_IMPACT_RATIO = 1500.0f;
+const float BIAS = 0.1f;
 
 //进行内部节点迁移的服务器比例
 const float MAX_MIGRATE_INNER_SERVER_RATIO = 0.2;
@@ -602,19 +606,28 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 	int32_t min_dis = INT32_MAX;
 	int32_t min_idx = 0;
 	E_Deploy_status stat;
+	
+	vector<int32_t> accomodatable_server_seqs;
 	for(size_t i = 0; i != size; ++i){
-		//找剩余容量最接近的
+		//找剩余容量最接近的 + 利用率最高的
 		stat = My_servers[i].is_deployable(vm);
 		if(stat != dep_No){
-			dis = pow((vm.cpu_num - My_servers[i].A.remaining_cpu_num - My_servers[i].B.remaining_cpu_num), 2)+
-					pow((vm.memory_num - My_servers[i].A.remaining_memory_num - My_servers[i].B.remaining_memory_num), 2);
-			
-			if(dis < min_dis){
-				min_dis = dis;
-				min_idx = i;
-			}
+			accomodatable_server_seqs.push_back(i);
 		}
 	}
+	size = accomodatable_server_seqs.size();
+	for(size_t i = 0; i != size; ++i){
+		int32_t cur_server_seq = accomodatable_server_seqs[i];
+		float vol_dis = abs((vm.cpu_num - My_servers[cur_server_seq].A.remaining_cpu_num - My_servers[cur_server_seq].B.remaining_cpu_num)) + 
+						abs((vm.memory_num - My_servers[i].A.remaining_memory_num - My_servers[i].B.remaining_memory_num));
+		float cur_server_used_rate = My_servers[cur_server_seq].cal_total_resource_used_rate();
+		float total_dis = SERVER_USAGE_IMPACT_RATIO * 1.0f / (BIAS + cur_server_used_rate) + vol_dis;
+		if(total_dis < min_dis){
+				min_dis = dis;
+				min_idx = accomodatable_server_seqs[i];
+			}
+		}
+
 	if(min_dis	== INT32_MAX)
 	return false;
 	stat = My_servers[min_idx].is_deployable(vm);
