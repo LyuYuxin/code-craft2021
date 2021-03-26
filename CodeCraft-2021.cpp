@@ -1,10 +1,11 @@
 #define _CRT_SECURE_NO_WARNINGS
-#define SUBMIT//是否提交
+//#define SUBMIT//是否提交
 //#define SIMILAR_NODE
 //#define BALANCE_NODE
 #define MIGRATE//原始迁移
 #define EARLY_STOPPING//迁移时短路判断 todo
 #define MAXIMIZE_FITNESS//pso
+#define PSO
 //#define BUY_SERVER_GREEDY
 #include <stdlib.h>
 #include <iostream>
@@ -1017,7 +1018,7 @@ void  InitialAllParticles()
 }
 
 // 获取双精度随机数
-double  GetDoubleRand(int N)
+double  GetDoubleRand(int N = 9999)
 {
 	double temp = rand() % (N + 1) / (double)(N + 1);
 	return temp;
@@ -1209,7 +1210,7 @@ double FitnessFunction(Particle& particle,int required_cpu,int required_mem)
 }
 
 
-int* runPSO(int required_cpu, int required_mem)
+void runPSO(int required_cpu, int required_mem)
 {
 	PSOPara psopara(ServerList.size(), true);
 	psopara.particle_num_ = 20;		// 粒子个数
@@ -1265,8 +1266,12 @@ int* runPSO(int required_cpu, int required_mem)
 		psooptimizer.UpdateAllParticles();
 		result[i] = psooptimizer.all_best_fitness_;
 		std::cout << "第" << i << "次迭代结果：";
-		std::cout << "x = " << psooptimizer.all_best_position_[0] << ", " << "y = " << psooptimizer.all_best_position_[1];
-		std::cout << ", fitness = " << result[i] << std::endl;
+		cout <<"[";
+		for(int j = 0; j != psopara.dim_; ++j){
+			std::cout<<psooptimizer.all_best_position_[j] << " ";
+		}
+		std::cout << "] , fitness = " << result[i] << std::endl;
+
 	}	
 
 }
@@ -1291,6 +1296,17 @@ void process() {
 		day_decision.W = day_decision.VM_migrate_vm_record.size();
 		#endif
 
+		#ifdef PSO
+		int required_cpu, required_mem;
+		cal_day_cpu_mem_requirement(Requests[t], required_cpu, required_mem);
+		//如果是负数，说明已有服务器可以满足现在的需求,不需要购买
+		if(required_mem < 0 or required_mem < 0){}
+		else{
+			runPSO(required_cpu, required_mem);
+			cout<<endl;
+		}
+		#endif
+
 		#ifdef BUY_SERVER_GREEDY
 			int required_cpu, required_mem;
 			cal_day_cpu_mem_requirement(Requests[t], required_cpu, required_mem);
@@ -1308,10 +1324,8 @@ void process() {
 					My_servers.push_back(server);
 				}
 				day_decision.server_bought_kind.insert(pair<string, vector<uint32_t> >(ServerList[purchase_info.second].type, seqs));
-
-		
 			}
-			#endif
+		#endif
 
 		for (uint32_t i = 0; i != Requests[t].request_num; ++i) {
 		//不断处理请求，直至已有服务器无法满足
@@ -1329,10 +1343,12 @@ void process() {
 			//如果是增加虚拟机
 			//如果可以满足条件
 			#ifndef BUY_SERVER_GREEDY
+			#ifndef PSO
 			if (best_fit(Requests[t].day_request[i], one_request_deployment_info)) {
 				day_decision.request_deployment_info.push_back(one_request_deployment_info);
 				continue;
 			};
+			#endif
 			#endif
 
 			#ifdef BUY_SERVER_GREEDY
@@ -1351,13 +1367,15 @@ void process() {
 			#endif
 
 
-			#ifndef BUY_SERVER_GREEDY
+ 			#ifndef BUY_SERVER_GREEDY 
+			 #ifndef PSO
 			//check_required_room(Requests[t], required_cpu, required_mem, i);
 			const S_VM& vm = VMList[Requests[t].day_request[i].vm_type];
 
 			//根据所需cpu and mem,购买服务器
 			My_servers.push_back(buy_server(vm.cpu_num, vm.memory_num, day_decision.server_bought_kind));
 			--i;//购买服务器后重新处理当前请求
+			#endif
 			#endif
 		}
 		day_decision.Q = day_decision.server_bought_kind.size();
