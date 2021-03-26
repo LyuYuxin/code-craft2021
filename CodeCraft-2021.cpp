@@ -24,11 +24,14 @@ enum E_Deploy_status{
 
 //可调参数列表
 //最大迁出服务器比例
-const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.5;
+const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.7;
 
+const float TOTAL_COST_RATIO = 1.0f;
+const float BUY_SERVER_MAINTAINANCE_COST_RATIO = 1.0f;
+const float BUY_SERVER_PURCHASE_COST_RATIO = 40.0f;
 //计算平衡分数用
 const float BIAS = 100.0f;
-          
+
 //进行内部节点迁移的服务器比例
 const float MAX_MIGRATE_INNER_SERVER_RATIO = 0.2;
 
@@ -466,11 +469,25 @@ inline C_BoughtServer buy_server(int32_t required_cpu, int32_t required_mem, map
 		size_t size = ServerList.size();
 		int min_idx = 0;
 		int min_dis = INT32_MAX;
+		vector<int> accomadatable_seqs;
+		
+		//先找到所有可容纳当前请求的服务器型号
 		for(size_t i = 0; i != size; ++i){
-			int cur_dis = pow(ServerList[i].cpu_num - required_cpu, 2) + pow(ServerList[i].memory_num - required_mem, 2);
-			if(cur_dis < min_dis and(ServerList[i].cpu_num / 2 >= required_cpu) and (ServerList[i].memory_num / 2 >= required_mem)){
-				min_dis = cur_dis;
-				min_idx = i;
+			if((ServerList[i].cpu_num / 2 >= required_cpu) and (ServerList[i].memory_num / 2 >= required_mem)){
+				accomadatable_seqs.push_back(i);
+			}
+		}
+
+		//综合考虑价格和容量差，选择一台服务器
+		size = accomadatable_seqs.size();
+		for(size_t i = 0; i != size; ++i){
+			//容量差距
+			float vol_dis = pow(ServerList[i].cpu_num - required_cpu, 2) + pow(ServerList[i].memory_num - required_mem, 2);
+			float purchase_cost = BUY_SERVER_MAINTAINANCE_COST_RATIO * ServerList[accomadatable_seqs[i]].maintenance_cost + BUY_SERVER_PURCHASE_COST_RATIO * ServerList[accomadatable_seqs[i]].purchase_cost;
+			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost;
+			if(total_dis < min_dis){
+				min_dis = total_dis;
+				min_idx = accomadatable_seqs[i];
 			}
 		}
 
