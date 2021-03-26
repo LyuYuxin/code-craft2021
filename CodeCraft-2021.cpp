@@ -1,10 +1,12 @@
 #define _CRT_SECURE_NO_WARNINGS
-#define SUBMIT
+#define SUBMIT//是否提交
 //#define SIMILAR_NODE
 //#define BALANCE_NODE
-//#define MIGRATE
-#define EARLY_STOPPING
-#define BUY_SERVER_GREEDY
+#define MIGRATE//原始迁移
+#define EARLY_STOPPING//迁移时短路判断 todo
+#define MAXIMIZE_FITNESS//pso
+//#define BUY_SERVER_GREEDY
+#include <stdlib.h>
 #include <iostream>
 #include<string>
 #include<vector>
@@ -22,7 +24,7 @@ enum E_Deploy_status{
 
 //可调参数列表
 //最大迁出服务器比例
-const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.16;
+const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.1;
 
 //计算平衡分数用
 const float BIAS = 100.0f;
@@ -770,6 +772,506 @@ void mirgrate_inside_server(S_DayTotalDecisionInfo & day_decision, bool is_balan
 }
 
 
+//PSO
+//*****************************************************************************************************
+//*****************************************************************************************************
+//*****************************************************************************************************
+//*****************************************************************************************************
+
+
+
+struct PSOPara
+{
+	int dim_;							// 参数维度（position和velocity的维度）
+	int particle_num_;					// 粒子个数
+	int max_iter_num_;					// 最大迭代次数
+
+	double *dt_ = nullptr;							// 时间步长
+	double *wstart_ = nullptr;						// 初始权重
+	double *wend_ = nullptr;						// 终止权重
+	double *C1_ = nullptr;							// 加速度因子
+	double *C2_ = nullptr;							// 加速度因子
+
+	double *upper_bound_ = nullptr;					// position搜索范围上限
+	double *lower_bound_ = nullptr;					// position搜索范围下限
+	double *range_interval_ = nullptr;				// position搜索区间长度
+	
+	int results_dim_ = 0;								// results的维度
+
+	PSOPara(){}
+
+	PSOPara(int dim, bool hasBound = false)
+	{
+		dim_ = dim;
+
+		dt_ = new double[dim_];
+		wstart_ = new double[dim_];
+		wend_ = new double[dim_];
+		C1_ = new double[dim_];
+		C2_ = new double[dim_];
+		if (hasBound)
+		{
+			upper_bound_ = new double[dim_];
+			lower_bound_ = new double[dim_];
+			range_interval_ = new double[dim_];
+		}
+	}
+
+	// 析构函数：释放堆内存
+	~PSOPara()
+	{
+		if (upper_bound_) { delete[]upper_bound_; }
+		if (lower_bound_) { delete[]lower_bound_; }
+		if (range_interval_) { delete[]range_interval_; }
+		if (dt_) { delete[]dt_; }
+		if (wstart_) { delete[]wstart_; }
+		if (wend_) { delete[]wend_; }
+		if (C1_) { delete[]C1_; }
+		if (C2_) { delete[]C2_; }
+	}
+};
+
+struct Particle
+{
+	int dim_;							// 参数维度（position和velocity的维度）
+	double fitness_;
+	double *position_ = nullptr;
+	double *velocity_ = nullptr;
+
+	double *best_position_ = nullptr;
+	double best_fitness_;
+	double *results_ = nullptr;			// 一些需要保存出的结果
+	int results_dim_ = 0;				// results_的维度
+
+	Particle(){}
+
+	~Particle()
+	{
+		if (position_) { delete[]position_; }
+		if (velocity_) { delete[]velocity_; }
+		if (best_position_) { delete[]best_position_; }
+		if (results_) { delete[]results_; }
+	}
+
+	Particle(int dim, double * position, double * velocity, double * best_position, double best_fitness)
+{
+	dim_ = dim;
+	//position_ = new double[dim];
+	//velocity_ = new double[dim];
+	//best_position_ = new double[dim];
+	position_ = position;
+	velocity_ = velocity;
+	best_position_ = best_position;
+	best_fitness_ = best_fitness;
+}
+
+};
+
+typedef double(*ComputeFitness)(Particle& particle, int32_t required_cpu, int32_t required_mem);
+
+
+class PSOOptimizer
+{
+public:
+	int particle_num_;					// 粒子个数
+	int max_iter_num_;					// 最大迭代次数
+	int curr_iter_;						// 当前迭代次数
+
+	int dim_;							// 参数维度（position和velocity的维度）
+
+	Particle *particles_ = nullptr;		// 所有粒子
+	
+	double *upper_bound_ = nullptr;					// position搜索范围上限
+	double *lower_bound_ = nullptr;					// position搜索范围下限
+	double *range_interval_ = nullptr;				// position搜索区间长度
+
+	double *dt_ = nullptr;							// 时间步长
+	double *wstart_ = nullptr;						// 初始权重
+	double *wend_ = nullptr;						// 终止权重
+	double *w_ = nullptr;							// 当前迭代权重
+	double *C1_ = nullptr;							// 加速度因子
+	double *C2_ = nullptr;							// 加速度因子
+
+	double all_best_fitness_;						// 全局最优粒子的适应度值
+	double *all_best_position_ = nullptr;			// 全局最优粒子的poistion
+	double *results_ = nullptr;						// 一些需要保存出的结果
+	int results_dim_ = 0;							// results的维度
+	int required_cpu, required_mem;
+	ComputeFitness fitness_fun_ = nullptr;			// 适应度函数
+
+public:
+	// 默认构造函数
+	PSOOptimizer() {}
+
+	// 构造函数
+ PSOOptimizer(PSOPara* pso_para, ComputeFitness fitness_fun, int32_t required_cpu, int32_t required_mem)
+{
+	particle_num_ = pso_para->particle_num_;
+	max_iter_num_ = pso_para->max_iter_num_;
+	dim_ = pso_para->dim_;
+	curr_iter_ = 0;
+
+	dt_ = new double[dim_];
+	wstart_ = new double[dim_];
+	wend_ = new double[dim_];
+	C1_ = new double[dim_];
+	C2_ = new double[dim_];
+
+	for (int i = 0; i < dim_; i++)
+	{
+		dt_[i] = pso_para->dt_[i];
+		wstart_[i] = pso_para->wstart_[i];
+		wend_[i] = pso_para->wend_[i];
+		C1_[i] = pso_para->C1_[i];
+		C2_[i] = pso_para->C2_[i];
+	}
+
+	if (pso_para->upper_bound_ && pso_para->lower_bound_)
+	{
+		upper_bound_ = new double[dim_];
+		lower_bound_ = new double[dim_];
+		range_interval_ = new double[dim_];
+
+		for (int i = 0; i < dim_; i++)
+		{
+			upper_bound_[i] = pso_para->upper_bound_[i];
+			lower_bound_[i] = pso_para->lower_bound_[i];
+			//range_interval_[i] = pso_para.range_interval_[i];
+			range_interval_[i] = upper_bound_[i] - lower_bound_[i];
+		}
+	}
+
+	particles_ = new Particle[particle_num_];
+	w_ = new double[dim_];
+	all_best_position_ = new double[dim_];
+
+	results_dim_ = pso_para->results_dim_;
+
+	if (results_dim_)
+	{
+		results_ = new double[results_dim_];
+	}
+
+	fitness_fun_ = fitness_fun;
+	required_cpu = required_cpu;
+	required_mem = required_mem;
+}
+
+ ~PSOOptimizer()
+{
+	if (particles_) { delete[]particles_; }
+	if (upper_bound_) { delete[]upper_bound_; }
+	if (lower_bound_) { delete[]lower_bound_; }
+	if (range_interval_) { delete[]range_interval_; }
+	if (dt_) { delete[]dt_; }
+	if (wstart_) { delete[]wstart_; }
+	if (wend_) { delete[]wend_; }
+	if (w_) { delete[]w_; }
+	if (C1_) { delete[]C1_; }
+	if (C2_) { delete[]C2_; }
+	if (all_best_position_) { delete[]all_best_position_; }
+	if (results_) { delete[]results_; }
+}
+
+// 初始化所有粒子
+void  InitialAllParticles()
+{
+	// 初始化第一个粒子参数并设置最优值
+	InitialParticle(0);
+	all_best_fitness_ = particles_[0].best_fitness_;
+	for (int j = 0; j < dim_; j++)
+	{
+		all_best_position_[j] = particles_[0].best_position_[j];
+	}
+
+	// 初始化其他粒子，并更新最优值
+	for (int i = 1; i < particle_num_; i++)
+	{
+		InitialParticle(i);
+#ifdef MAXIMIZE_FITNESS
+		if (particles_[i].best_fitness_ > all_best_fitness_)
+#else
+		if (particles_[i].best_fitness_ < all_best_fitness_)
+#endif
+		{
+			all_best_fitness_ = particles_[i].best_fitness_;
+			for (int j = 0; j < dim_; j++)
+			{
+				all_best_position_[j] = particles_[i].best_position_[j];
+			}
+
+			// 如果需要保存出一些结果
+			if (particles_[i].results_dim_ && results_dim_ == particles_[i].results_dim_)
+			{
+				for (int k = 0; k < results_dim_; k++)
+				{
+					results_[k] = particles_[i].results_[k];
+				}
+			}
+			else if (results_dim_)
+			{
+				std::cout << "WARNING: the dimension of your saved results for every particle\nis not match with the dimension you specified for PSO optimizer ant no result is saved!" << std::endl;
+			}
+		}
+	}
+}
+
+// 获取双精度随机数
+double  GetDoubleRand(int N)
+{
+	double temp = rand() % (N + 1) / (double)(N + 1);
+	return temp;
+}
+
+double  GetFitness(Particle & particle)
+{
+	return fitness_fun_(particle, required_cpu, required_mem);
+}
+
+void  UpdateAllParticles()
+{
+	GetInertialWeight();
+	for (int i = 0; i < particle_num_; i++)
+	{
+		UpdateParticle(i);
+#ifdef MAXIMIZE_FITNESS
+		if (particles_[i].best_fitness_ > all_best_fitness_)
+#else
+		if (particles_[i].best_fitness_ < all_best_fitness_)
+#endif
+		{
+			all_best_fitness_ = particles_[i].best_fitness_;
+			for (int j = 0; j < dim_; j++)
+			{
+				all_best_position_[j] = particles_[i].best_position_[j];
+			}
+			
+			// 如果需要保存出一些参数
+			if (particles_[i].results_dim_ && results_dim_ == particles_[i].results_dim_)
+			{
+				for (int k = 0; k < results_dim_; k++)
+				{
+					results_[k] = particles_[i].results_[k];
+				}
+			}
+			else if (results_dim_)
+			{
+				std::cout << "WARNING: the dimension of your saved results for every particle\nis not match with the dimension you specified for PSO optimizer ant no result is saved!" << std::endl;
+			}
+		}
+	}
+	curr_iter_++;
+}
+
+void  UpdateParticle(int i)
+{
+	// 计算当前迭代的权重
+	for (int j = 0; j < dim_; j++)
+	{
+		// 保存上一次迭代结果的position和velocity
+		//double last_velocity = particles_[i].velocity_[j];
+		double last_position = particles_[i].position_[j];
+
+		particles_[i].velocity_[j] = w_[j] * particles_[i].velocity_[j] +
+			C1_[j] * GetDoubleRand() * (particles_[i].best_position_[j] - particles_[i].position_[j]) +
+			C2_[j] * GetDoubleRand() * (all_best_position_[j] - particles_[i].position_[j]);
+		particles_[i].position_[j] += dt_[j] * particles_[i].velocity_[j];
+
+		// 如果搜索区间有上下限限制
+		if (upper_bound_ && lower_bound_)
+		{
+			if (particles_[i].position_[j] > upper_bound_[j])
+			{
+				double thre = GetDoubleRand(99);
+				if (last_position == upper_bound_[j])
+				{
+					particles_[i].position_[j] = GetDoubleRand() * range_interval_[j] + lower_bound_[j];
+				}
+				else if (thre < 0.5)
+				{
+					particles_[i].position_[j] = upper_bound_[j] - (upper_bound_[j] - last_position) * GetDoubleRand();
+				}
+				else
+				{
+					particles_[i].position_[j] = upper_bound_[j];
+				}		
+			}
+			if (particles_[i].position_[j] < lower_bound_[j])
+			{
+				double thre = GetDoubleRand(99);
+				if (last_position == lower_bound_[j])
+				{
+					particles_[i].position_[j] = GetDoubleRand() * range_interval_[j] + lower_bound_[j];
+				}
+				else if (thre < 0.5)
+				{
+					particles_[i].position_[j] = lower_bound_[j] + (last_position - lower_bound_[j]) * GetDoubleRand();
+				}
+				else
+				{
+					particles_[i].position_[j] = lower_bound_[j];
+				}
+			}
+		}
+	}
+	particles_[i].fitness_ = GetFitness(particles_[i]);
+
+#ifdef MAXIMIZE_FITNESS
+	if (particles_[i].fitness_ > particles_[i].best_fitness_)
+#else
+	if (particles_[i].fitness_ < particles_[i].best_fitness_)
+#endif
+	{
+		particles_[i].best_fitness_ = particles_[i].fitness_;
+		for (int j = 0; j < dim_; j++)
+		{
+			particles_[i].best_position_[j] = particles_[i].position_[j];
+		}
+	}
+}
+
+
+void  GetInertialWeight()
+{
+	double temp = curr_iter_ / (double)max_iter_num_;
+	temp *= temp;
+	for (int i = 0; i < dim_; i++)
+	{
+		w_[i] = wstart_[i] - (wstart_[i] - wend_[i]) * temp;
+	}
+}
+
+
+void  InitialParticle(int i)
+{
+	// 为每个粒子动态分配内存
+	particles_[i].position_ = new double[dim_];
+	particles_[i].velocity_ = new double[dim_];
+	particles_[i].best_position_ = new double[dim_];
+
+	//if (results_dim_)
+	//{
+	//	particles_[i].results_ = new double[results_dim_];
+	//}
+
+	// 初始化position/veloctiy值
+	for (int j = 0; j < dim_; j++)
+	{
+		// if defines lower bound and upper bound
+		if (range_interval_)
+		{
+			particles_[i].position_[j] = GetDoubleRand() * range_interval_[j] + lower_bound_[j];
+			particles_[i].velocity_[j] = GetDoubleRand() * range_interval_[j] / 300;
+			//std::cout << particles_[i].position_[j] << std::endl;
+		}
+		else
+		{
+			particles_[i].position_[j] = GetDoubleRand() * 2;
+			particles_[i].velocity_[j] = GetDoubleRand() * 0.5;
+		}
+	}
+
+	// 设置初始化最优适应度值
+	particles_[i].fitness_ = GetFitness(particles_[i]);
+
+	for (int j = 0; j < dim_; j++)
+	{
+		particles_[i].best_position_[j] = particles_[i].position_[j];
+	}
+	particles_[i].best_fitness_ = particles_[i].fitness_;
+}
+
+};
+
+
+double FitnessFunction(Particle& particle,int required_cpu,int required_mem)
+{
+	double sumCpu=0;
+	double sumMem=0;
+	double sumCost=0;
+	for(int i=0;i<ServerList.size();i++)
+	{
+		sumCpu+=ServerList[i].cpu_num*particle.position_[i];
+		sumMem+=ServerList[i].memory_num*particle.position_[i];
+		sumCost+=(ServerList[i].purchase_cost+ServerList[i].maintenance_cost)*particle.position_[i];
+	}
+
+	if(sumCpu<required_cpu||sumMem<required_mem) return 0;
+
+	double f1=1/sumCost;
+	double f2=required_mem/sumMem;
+	double f3=required_cpu/sumCpu;
+	double f=f1+f2+f3;
+
+	return f;
+
+
+}
+
+
+int* runPSO(int required_cpu, int required_mem)
+{
+	PSOPara psopara(ServerList.size(), true);
+	psopara.particle_num_ = 20;		// 粒子个数
+	psopara.max_iter_num_ = 300;	// 最大迭代次数
+
+	double *dtArr=new double[ServerList.size()];
+	for(int i=0;i<ServerList.size();i++)
+	{
+		*(dtArr+i)=1.0;
+	}
+	psopara.dt_=dtArr;
+	double *wstartArr=new double[ServerList.size()];
+	for(int i=0;i<ServerList.size();i++)
+	{
+		*(wstartArr+i)=0.9;
+	}
+	psopara.wstart_=wstartArr;
+	double *wendArr=new double[ServerList.size()];
+	for(int i=0;i<ServerList.size();i++)
+	{
+		*(wendArr+i)=0.4;
+	}
+	psopara.wend_=wendArr;
+	double *C1Arr=new double[ServerList.size()];
+	for(int i=0;i<ServerList.size();i++)
+	{
+		*(C1Arr+i)=1.49445;
+	}
+	psopara.C1_=C1Arr;
+	double *C2Arr=new double[ServerList.size()];
+	for(int i=0;i<ServerList.size();i++)
+	{
+		*(C2Arr+i)=1.49445;
+	}
+	psopara.C2_=C2Arr;
+
+	for(int i=0;i<ServerList.size();i++)
+	{
+		psopara.lower_bound_[i] = 0;
+		psopara.upper_bound_[i] = 100;
+	}
+
+
+	PSOOptimizer psooptimizer(&psopara, FitnessFunction, required_cpu, required_mem);
+
+	std::srand((unsigned int)time(0));
+	psooptimizer.InitialAllParticles();
+	double fitness = psooptimizer.all_best_fitness_;
+	double *result = new double[psooptimizer.max_iter_num_];
+
+	for (int i = 0; i < psooptimizer.max_iter_num_; i++)
+	{
+		psooptimizer.UpdateAllParticles();
+		result[i] = psooptimizer.all_best_fitness_;
+		std::cout << "第" << i << "次迭代结果：";
+		std::cout << "x = " << psooptimizer.all_best_position_[0] << ", " << "y = " << psooptimizer.all_best_position_[1];
+		std::cout << ", fitness = " << result[i] << std::endl;
+	}	
+
+}
+
+
 //主流程
 void process() {
 	
@@ -794,18 +1296,19 @@ void process() {
 			cal_day_cpu_mem_requirement(Requests[t], required_cpu, required_mem);
 			//如果是负数，说明已有服务器可以满足现在的需求,不需要购买
 			if(required_mem < 0 or required_cpu < 0){}
-			else{
+			else{			
+				//存储购买序列号	
+				vector<uint32_t> seqs;
 				pair<int32_t, int32_t> purchase_info = greedy_buy_day_servers(required_cpu, required_mem);
 			
-				vector<uint32_t> seqs;
 				for(int i = 0; i != purchase_info.first; ++i){
-				C_BoughtServer server = ServerList[purchase_info.second];
+					C_BoughtServer server = ServerList[purchase_info.second];
 				
-				seqs.push_back(server.seq);//存储购买序列号
-				My_servers.push_back(server);
+					seqs.push_back(server.seq);
+					My_servers.push_back(server);
+				}
 				day_decision.server_bought_kind.insert(pair<string, vector<uint32_t> >(ServerList[purchase_info.second].type, seqs));
-			}
-			
+
 		
 			}
 			#endif
