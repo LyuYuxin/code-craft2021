@@ -1,11 +1,10 @@
 #define _CRT_SECURE_NO_WARNINGS
-//#define SUBMIT//是否提交
+#define SUBMIT//是否提交
 //#define SIMILAR_NODE
 //#define BALANCE_NODE
 #define MIGRATE//原始迁移
 #define EARLY_STOPPING//迁移时短路判断 todo
-#define MAXIMIZE_FITNESS//pso
-#define PSO
+
 //#define BUY_SERVER_GREEDY
 #include <stdlib.h>
 #include <iostream>
@@ -25,7 +24,7 @@ enum E_Deploy_status{
 
 //可调参数列表
 //最大迁出服务器比例
-const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.1;
+const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.5;
 
 //计算平衡分数用
 const float BIAS = 100.0f;
@@ -272,7 +271,7 @@ public:
 	
 	inline void removeVM(uint32_t vm_id, const string & vm_type){
 		assert(deployed_vms.find(vm_id) != deployed_vms.end());
-		S_DeploymentInfo deployment_info = deployed_vms[vm_id];
+		const S_DeploymentInfo &deployment_info = deployed_vms[vm_id];
 		S_VM vm_info = VMList[vm_type];
 		if(deployment_info.is_double_node){
 			A.remaining_cpu_num += vm_info.half_cpu_num;
@@ -405,39 +404,39 @@ vector<C_BoughtServer> My_servers;//已购买的服务器列表
 
 //计算当天最多需要的单节点cpu和mem数量
 //暂时没用
-inline void check_required_room(const S_DayRequest& day_request, int32_t& required_cpu, int32_t & required_mem, uint32_t cur_idx){
-	uint32_t total_request_cpu = 0;
-	uint32_t total_request_mem = 0;
-	uint32_t max_cpu = 0;
-	uint32_t max_mem = 0;
-	for(uint32_t i = cur_idx; i != day_request.request_num; ++i){
-		const S_VM& vm = VMList[day_request.day_request[i].vm_type];
-		if(day_request.day_request[i].is_add){
-			if(vm.is_double_node){
-				total_request_cpu += vm.half_cpu_num;
-				total_request_mem += vm.half_mem_num;
-			}
-			else{
-				total_request_mem += vm.memory_num;
-				total_request_cpu += vm.cpu_num;
-			}
-		} 
-		else{
-			if(vm.is_double_node){
-				total_request_cpu += vm.half_cpu_num;
-				total_request_mem += vm.half_mem_num;
-			}
-			else{
-				total_request_mem += -vm.memory_num;
-				total_request_cpu += -vm.cpu_num;
-			}
-		}
-		if(total_request_cpu >= max_cpu)max_cpu = total_request_cpu;
-		if(total_request_mem >= max_mem)max_mem = total_request_mem;
-	};
-	required_mem = max_mem;
-	required_cpu = max_cpu;
-}
+// inline void check_required_room(const S_DayRequest& day_request, int32_t& required_cpu, int32_t & required_mem, uint32_t cur_idx){
+// 	uint32_t total_request_cpu = 0;
+// 	uint32_t total_request_mem = 0;
+// 	uint32_t max_cpu = 0;
+// 	uint32_t max_mem = 0;
+// 	for(uint32_t i = cur_idx; i != day_request.request_num; ++i){
+// 		const S_VM& vm = VMList[day_request.day_request[i].vm_type];
+// 		if(day_request.day_request[i].is_add){
+// 			if(vm.is_double_node){
+// 				total_request_cpu += vm.half_cpu_num;
+// 				total_request_mem += vm.half_mem_num;
+// 			}
+// 			else{
+// 				total_request_mem += vm.memory_num;
+// 				total_request_cpu += vm.cpu_num;
+// 			}
+// 		} 
+// 		else{
+// 			if(vm.is_double_node){
+// 				total_request_cpu += vm.half_cpu_num;
+// 				total_request_mem += vm.half_mem_num;
+// 			}
+// 			else{
+// 				total_request_mem += -vm.memory_num;
+// 				total_request_cpu += -vm.cpu_num;
+// 			}
+// 		}
+// 		if(total_request_cpu >= max_cpu)max_cpu = total_request_cpu;
+// 		if(total_request_mem >= max_mem)max_mem = total_request_mem;
+// 	};
+// 	required_mem = max_mem;
+// 	required_cpu = max_cpu;
+// }
 
 // //找到使用率最低且不为0的服务器
 //  uint32_t get_least_used_server(){
@@ -475,7 +474,7 @@ inline C_BoughtServer buy_server(int32_t required_cpu, int32_t required_mem, map
 			}
 		}
 
-		S_Server server =  ServerList[min_idx];
+		const S_Server& server =  ServerList[min_idx];
 		C_BoughtServer bought_server(server);
 		//记录购买了哪种服务器，并令相应记录+1
 
@@ -663,13 +662,17 @@ inline void migrate_vm(E_Deploy_status status ,uint32_t vm_id, uint32_t in_serve
 }
 
 //对服务器按利用率升序排序
-bool com_used_rate( C_BoughtServer& A,  C_BoughtServer& B){
-	return A < B;
+bool com_used_rate(C_BoughtServer* p_A, C_BoughtServer* p_B){
+	return *p_A < *p_B;
 }
 
 //根据两个节点使用率均衡程度对服务器排序，差值越大越不均衡
 bool com_node_used_balance_rate(C_BoughtServer& s1,  C_BoughtServer& s2){
 	return abs(s1.A_used_rate - s1.B_used_rate) < abs(s2.A_used_rate - s2.B_used_rate);
+}
+
+bool com_VM(const pair<uint32_t,const S_VM*> &A,const pair<uint32_t, const S_VM*> &B){
+	return A.second->cpu_num + A.second->memory_num < B.second->memory_num + B.second->cpu_num;
 }
 
 //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
@@ -679,31 +682,103 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 
 	if(remaining_migrate_vm_num == 0) return;
 
-
 	//对服务器按使用率进行升序排列
-	vector<C_BoughtServer> tmp_my_servers(My_servers);
+	vector<C_BoughtServer *> tmp_my_servers;
+	size_t size = My_servers.size();
+	 C_BoughtServer * p_server;
+
+	for(size_t i = 0; i != size; ++i){
+		p_server = &My_servers[i];
+		tmp_my_servers.push_back(p_server);
+	}
+
 	sort(tmp_my_servers.begin(), tmp_my_servers.end(), com_used_rate);	
 
 	//查看的迁出服务器窗口大小
 	int32_t max_out = (int32_t)(My_servers.size() * MAX_MIGRATE_OUT_SERVER_RATIO);
 	if(max_out < 1)return;
 	register int32_t out = 0;
+	uint32_t least_used_server_seq;
+	C_BoughtServer *p_out_server = nullptr;
 
-	
-	
+	vector<pair<uint32_t, const S_VM*> >:: const_iterator vm_it;
+	vector<pair<uint32_t, const S_VM*> >:: const_iterator vm_end;
+	unordered_map<uint32_t, S_DeploymentInfo>::const_iterator server_it;
+	unordered_map<uint32_t, S_DeploymentInfo>::const_iterator server_end;
 	//迁移主循环
 	do{	
 		//迁出服务器信息
-		uint32_t least_used_server_seq = tmp_my_servers[out].seq;
-		C_BoughtServer &out_server = My_servers[least_used_server_seq];
+		least_used_server_seq = tmp_my_servers[out]->seq;
+		p_out_server = &My_servers[least_used_server_seq];
+		
+		
+		#ifdef EARLY_STOPPING
+		//用于排序
+		vector<pair<uint32_t, const S_VM*> > cur_server_vm_info;
+		//判断需求最小的虚拟机是否可以迁移，若不能则直接看下一个服务器
 
-		//遍历当前迁出服务器所有已有的虚拟机
-		unordered_map<uint32_t, S_DeploymentInfo>::const_iterator it = out_server.deployed_vms.begin();		
-		unordered_map<uint32_t, S_DeploymentInfo>::const_iterator end = out_server.deployed_vms.end();
+		//构造有序虚拟机信息表
+		server_it = p_out_server->deployed_vms.begin();		
+		server_end = p_out_server->deployed_vms.end();
+			for(;server_it != server_end; ++server_it){
+			cur_server_vm_info.push_back(pair<uint32_t,const S_VM*>(server_it->first, &VMList[server_it->second.vm_type]));
+		}
+		sort(cur_server_vm_info.begin(), cur_server_vm_info.end(), com_VM);
 
+		//开始遍历当前迁出服务器所有已有的虚拟机
+		vm_it = cur_server_vm_info.begin();
+		vm_end = cur_server_vm_info.end();
+
+		
+
+		for(;vm_it != vm_end;){
+			
+			E_Deploy_status stat = dep_No;
+			
+			//遍历所有迁入服务器
+			//i只是当前迁入服务器遍历序号，并不是服务器序列号
+			const C_BoughtServer *in_server = nullptr;
+			for(size_t in = tmp_my_servers.size() - 1; in > out; --in){
+				
+				//把当前虚拟机迁移到当前服务器上
+				uint32_t most_used_server_seq = tmp_my_servers[in]->seq;
+				in_server = &My_servers[most_used_server_seq];
+				
+				stat = in_server->is_deployable(*vm_it->second);
+				
+				if(stat == dep_No){
+					continue;
+				}
+
+				else{
+				//一次成功迁移
+					vector<pair<uint32_t, const S_VM*> >:: const_iterator tmp_it = vm_it;
+					++vm_it;
+					//迁移信息记录
+					S_MigrationInfo one_migration_info;
+					migrate_vm(stat, tmp_it->first, most_used_server_seq, one_migration_info);
+					day_decision.VM_migrate_vm_record.push_back(one_migration_info);
+					if(--remaining_migrate_vm_num == 0)return;
+					break;
+				}
+
+
+			}
+			
+			//如果扫描完一遍迁入服务器，stat不为no，说明此虚拟机已被迁入新服务器
+			if(stat != dep_No)continue;
+			
+			//当前虚拟机不可迁出，直接换下一台迁出服务器
+			break;
+		}
+
+		#endif
 		// //初始化使用率高的服务器剩余容量与当前迁出虚拟机需要容量的距离
 		// uint32_t min_dis = UINT32_MAX;
 		// int32_t min_idx = 0;
+		#ifndef EARLY_STOPPING
+		unordered_map<uint32_t, S_DeploymentInfo>::const_iterator it = out_server.deployed_vms.begin();		
+		unordered_map<uint32_t, S_DeploymentInfo>::const_iterator end = out_server.deployed_vms.end();
 
 		for(; it != end;){
 			const S_VM & vm =  VMList[it->second.vm_type];
@@ -740,6 +815,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 			//最好是能把使用率低的服务器腾出来，如果腾不出来，就要考虑换次低的服务器进行尝试
 			++it;
 		}
+		#endif
 		++out;
 	}while(out != max_out);
 }
@@ -772,511 +848,6 @@ void mirgrate_inside_server(S_DayTotalDecisionInfo & day_decision, bool is_balan
 	}
 }
 
-
-//PSO
-//*****************************************************************************************************
-//*****************************************************************************************************
-//*****************************************************************************************************
-//*****************************************************************************************************
-
-
-
-struct PSOPara
-{
-	int dim_;							// 参数维度（position和velocity的维度）
-	int particle_num_;					// 粒子个数
-	int max_iter_num_;					// 最大迭代次数
-
-	double *dt_ = nullptr;							// 时间步长
-	double *wstart_ = nullptr;						// 初始权重
-	double *wend_ = nullptr;						// 终止权重
-	double *C1_ = nullptr;							// 加速度因子
-	double *C2_ = nullptr;							// 加速度因子
-
-	double *upper_bound_ = nullptr;					// position搜索范围上限
-	double *lower_bound_ = nullptr;					// position搜索范围下限
-	double *range_interval_ = nullptr;				// position搜索区间长度
-	
-	int results_dim_ = 0;								// results的维度
-
-	PSOPara(){}
-
-	PSOPara(int dim, bool hasBound = false)
-	{
-		dim_ = dim;
-
-		dt_ = new double[dim_];
-		wstart_ = new double[dim_];
-		wend_ = new double[dim_];
-		C1_ = new double[dim_];
-		C2_ = new double[dim_];
-		if (hasBound)
-		{
-			upper_bound_ = new double[dim_];
-			lower_bound_ = new double[dim_];
-			range_interval_ = new double[dim_];
-		}
-	}
-
-	// 析构函数：释放堆内存
-	~PSOPara()
-	{
-		if (upper_bound_) { delete[]upper_bound_; }
-		if (lower_bound_) { delete[]lower_bound_; }
-		if (range_interval_) { delete[]range_interval_; }
-		if (dt_) { delete[]dt_; }
-		if (wstart_) { delete[]wstart_; }
-		if (wend_) { delete[]wend_; }
-		if (C1_) { delete[]C1_; }
-		if (C2_) { delete[]C2_; }
-	}
-};
-
-struct Particle
-{
-	int dim_;							// 参数维度（position和velocity的维度）
-	double fitness_;
-	double *position_ = nullptr;
-	double *velocity_ = nullptr;
-
-	double *best_position_ = nullptr;
-	double best_fitness_;
-	double *results_ = nullptr;			// 一些需要保存出的结果
-	int results_dim_ = 0;				// results_的维度
-
-	Particle(){}
-
-	~Particle()
-	{
-		if (position_) { delete[]position_; }
-		if (velocity_) { delete[]velocity_; }
-		if (best_position_) { delete[]best_position_; }
-		if (results_) { delete[]results_; }
-	}
-
-	Particle(int dim, double * position, double * velocity, double * best_position, double best_fitness)
-{
-	dim_ = dim;
-	//position_ = new double[dim];
-	//velocity_ = new double[dim];
-	//best_position_ = new double[dim];
-	position_ = position;
-	velocity_ = velocity;
-	best_position_ = best_position;
-	best_fitness_ = best_fitness;
-}
-
-};
-
-typedef double(*ComputeFitness)(Particle& particle, int32_t required_cpu, int32_t required_mem);
-
-
-class PSOOptimizer
-{
-public:
-	int particle_num_;					// 粒子个数
-	int max_iter_num_;					// 最大迭代次数
-	int curr_iter_;						// 当前迭代次数
-
-	int dim_;							// 参数维度（position和velocity的维度）
-
-	Particle *particles_ = nullptr;		// 所有粒子
-	
-	double *upper_bound_ = nullptr;					// position搜索范围上限
-	double *lower_bound_ = nullptr;					// position搜索范围下限
-	double *range_interval_ = nullptr;				// position搜索区间长度
-
-	double *dt_ = nullptr;							// 时间步长
-	double *wstart_ = nullptr;						// 初始权重
-	double *wend_ = nullptr;						// 终止权重
-	double *w_ = nullptr;							// 当前迭代权重
-	double *C1_ = nullptr;							// 加速度因子
-	double *C2_ = nullptr;							// 加速度因子
-
-	double all_best_fitness_;						// 全局最优粒子的适应度值
-	double *all_best_position_ = nullptr;			// 全局最优粒子的poistion
-	double *results_ = nullptr;						// 一些需要保存出的结果
-	int results_dim_ = 0;							// results的维度
-	int required_cpu, required_mem;
-	ComputeFitness fitness_fun_ = nullptr;			// 适应度函数
-
-public:
-	// 默认构造函数
-	PSOOptimizer() {}
-
-	// 构造函数
- PSOOptimizer(PSOPara* pso_para, ComputeFitness fitness_fun, int32_t required_cpu, int32_t required_mem)
-{
-	particle_num_ = pso_para->particle_num_;
-	max_iter_num_ = pso_para->max_iter_num_;
-	dim_ = pso_para->dim_;
-	curr_iter_ = 0;
-
-	dt_ = new double[dim_];
-	wstart_ = new double[dim_];
-	wend_ = new double[dim_];
-	C1_ = new double[dim_];
-	C2_ = new double[dim_];
-
-	for (int i = 0; i < dim_; i++)
-	{
-		dt_[i] = pso_para->dt_[i];
-		wstart_[i] = pso_para->wstart_[i];
-		wend_[i] = pso_para->wend_[i];
-		C1_[i] = pso_para->C1_[i];
-		C2_[i] = pso_para->C2_[i];
-	}
-
-	if (pso_para->upper_bound_ && pso_para->lower_bound_)
-	{
-		upper_bound_ = new double[dim_];
-		lower_bound_ = new double[dim_];
-		range_interval_ = new double[dim_];
-
-		for (int i = 0; i < dim_; i++)
-		{
-			upper_bound_[i] = pso_para->upper_bound_[i];
-			lower_bound_[i] = pso_para->lower_bound_[i];
-			//range_interval_[i] = pso_para.range_interval_[i];
-			range_interval_[i] = upper_bound_[i] - lower_bound_[i];
-		}
-	}
-
-	particles_ = new Particle[particle_num_];
-	w_ = new double[dim_];
-	all_best_position_ = new double[dim_];
-
-	results_dim_ = pso_para->results_dim_;
-
-	if (results_dim_)
-	{
-		results_ = new double[results_dim_];
-	}
-
-	fitness_fun_ = fitness_fun;
-	required_cpu = required_cpu;
-	required_mem = required_mem;
-}
-
- ~PSOOptimizer()
-{
-	if (particles_) { delete[]particles_; }
-	if (upper_bound_) { delete[]upper_bound_; }
-	if (lower_bound_) { delete[]lower_bound_; }
-	if (range_interval_) { delete[]range_interval_; }
-	if (dt_) { delete[]dt_; }
-	if (wstart_) { delete[]wstart_; }
-	if (wend_) { delete[]wend_; }
-	if (w_) { delete[]w_; }
-	if (C1_) { delete[]C1_; }
-	if (C2_) { delete[]C2_; }
-	if (all_best_position_) { delete[]all_best_position_; }
-	if (results_) { delete[]results_; }
-}
-
-// 初始化所有粒子
-void  InitialAllParticles()
-{
-	// 初始化第一个粒子参数并设置最优值
-	InitialParticle(0);
-	all_best_fitness_ = particles_[0].best_fitness_;
-	for (int j = 0; j < dim_; j++)
-	{
-		all_best_position_[j] = particles_[0].best_position_[j];
-	}
-
-	// 初始化其他粒子，并更新最优值
-	for (int i = 1; i < particle_num_; i++)
-	{
-		InitialParticle(i);
-#ifdef MAXIMIZE_FITNESS
-		if (particles_[i].best_fitness_ > all_best_fitness_)
-#else
-		if (particles_[i].best_fitness_ < all_best_fitness_)
-#endif
-		{
-			all_best_fitness_ = particles_[i].best_fitness_;
-			for (int j = 0; j < dim_; j++)
-			{
-				all_best_position_[j] = particles_[i].best_position_[j];
-			}
-
-			// 如果需要保存出一些结果
-			if (particles_[i].results_dim_ && results_dim_ == particles_[i].results_dim_)
-			{
-				for (int k = 0; k < results_dim_; k++)
-				{
-					results_[k] = particles_[i].results_[k];
-				}
-			}
-			else if (results_dim_)
-			{
-				std::cout << "WARNING: the dimension of your saved results for every particle\nis not match with the dimension you specified for PSO optimizer ant no result is saved!" << std::endl;
-			}
-		}
-	}
-}
-
-// 获取双精度随机数
-double  GetDoubleRand(int N = 9999)
-{
-	double temp = rand() % (N + 1) / (double)(N + 1);
-	return temp;
-}
-
-double  GetFitness(Particle & particle)
-{
-	return fitness_fun_(particle, required_cpu, required_mem);
-}
-
-void  UpdateAllParticles()
-{
-	GetInertialWeight();
-	for (int i = 0; i < particle_num_; i++)
-	{
-		UpdateParticle(i);
-#ifdef MAXIMIZE_FITNESS
-		if (particles_[i].best_fitness_ > all_best_fitness_)
-#else
-		if (particles_[i].best_fitness_ < all_best_fitness_)
-#endif
-		{
-			all_best_fitness_ = particles_[i].best_fitness_;
-			for (int j = 0; j < dim_; j++)
-			{
-				all_best_position_[j] = particles_[i].best_position_[j];
-			}
-			
-			// 如果需要保存出一些参数
-			if (particles_[i].results_dim_ && results_dim_ == particles_[i].results_dim_)
-			{
-				for (int k = 0; k < results_dim_; k++)
-				{
-					results_[k] = particles_[i].results_[k];
-				}
-			}
-			else if (results_dim_)
-			{
-				std::cout << "WARNING: the dimension of your saved results for every particle\nis not match with the dimension you specified for PSO optimizer ant no result is saved!" << std::endl;
-			}
-		}
-	}
-	curr_iter_++;
-}
-
-void  UpdateParticle(int i)
-{
-	// 计算当前迭代的权重
-	for (int j = 0; j < dim_; j++)
-	{
-		// 保存上一次迭代结果的position和velocity
-		//double last_velocity = particles_[i].velocity_[j];
-		double last_position = particles_[i].position_[j];
-
-		particles_[i].velocity_[j] = w_[j] * particles_[i].velocity_[j] +
-			C1_[j] * GetDoubleRand() * (particles_[i].best_position_[j] - particles_[i].position_[j]) +
-			C2_[j] * GetDoubleRand() * (all_best_position_[j] - particles_[i].position_[j]);
-		particles_[i].position_[j] += dt_[j] * particles_[i].velocity_[j];
-
-		// 如果搜索区间有上下限限制
-		if (upper_bound_ && lower_bound_)
-		{
-			if (particles_[i].position_[j] > upper_bound_[j])
-			{
-				double thre = GetDoubleRand(99);
-				if (last_position == upper_bound_[j])
-				{
-					particles_[i].position_[j] = GetDoubleRand() * range_interval_[j] + lower_bound_[j];
-				}
-				else if (thre < 0.5)
-				{
-					particles_[i].position_[j] = upper_bound_[j] - (upper_bound_[j] - last_position) * GetDoubleRand();
-				}
-				else
-				{
-					particles_[i].position_[j] = upper_bound_[j];
-				}		
-			}
-			if (particles_[i].position_[j] < lower_bound_[j])
-			{
-				double thre = GetDoubleRand(99);
-				if (last_position == lower_bound_[j])
-				{
-					particles_[i].position_[j] = GetDoubleRand() * range_interval_[j] + lower_bound_[j];
-				}
-				else if (thre < 0.5)
-				{
-					particles_[i].position_[j] = lower_bound_[j] + (last_position - lower_bound_[j]) * GetDoubleRand();
-				}
-				else
-				{
-					particles_[i].position_[j] = lower_bound_[j];
-				}
-			}
-		}
-	}
-	particles_[i].fitness_ = GetFitness(particles_[i]);
-
-#ifdef MAXIMIZE_FITNESS
-	if (particles_[i].fitness_ > particles_[i].best_fitness_)
-#else
-	if (particles_[i].fitness_ < particles_[i].best_fitness_)
-#endif
-	{
-		particles_[i].best_fitness_ = particles_[i].fitness_;
-		for (int j = 0; j < dim_; j++)
-		{
-			particles_[i].best_position_[j] = particles_[i].position_[j];
-		}
-	}
-}
-
-
-void  GetInertialWeight()
-{
-	double temp = curr_iter_ / (double)max_iter_num_;
-	temp *= temp;
-	for (int i = 0; i < dim_; i++)
-	{
-		w_[i] = wstart_[i] - (wstart_[i] - wend_[i]) * temp;
-	}
-}
-
-
-void  InitialParticle(int i)
-{
-	// 为每个粒子动态分配内存
-	particles_[i].position_ = new double[dim_];
-	particles_[i].velocity_ = new double[dim_];
-	particles_[i].best_position_ = new double[dim_];
-
-	//if (results_dim_)
-	//{
-	//	particles_[i].results_ = new double[results_dim_];
-	//}
-
-	// 初始化position/veloctiy值
-	for (int j = 0; j < dim_; j++)
-	{
-		// if defines lower bound and upper bound
-		if (range_interval_)
-		{
-			particles_[i].position_[j] = GetDoubleRand() * range_interval_[j] + lower_bound_[j];
-			particles_[i].velocity_[j] = GetDoubleRand() * range_interval_[j] / 300;
-			//std::cout << particles_[i].position_[j] << std::endl;
-		}
-		else
-		{
-			particles_[i].position_[j] = GetDoubleRand() * 2;
-			particles_[i].velocity_[j] = GetDoubleRand() * 0.5;
-		}
-	}
-
-	// 设置初始化最优适应度值
-	particles_[i].fitness_ = GetFitness(particles_[i]);
-
-	for (int j = 0; j < dim_; j++)
-	{
-		particles_[i].best_position_[j] = particles_[i].position_[j];
-	}
-	particles_[i].best_fitness_ = particles_[i].fitness_;
-}
-
-};
-
-
-double FitnessFunction(Particle& particle,int required_cpu,int required_mem)
-{
-	double sumCpu=0;
-	double sumMem=0;
-	double sumCost=0;
-	for(int i=0;i<ServerList.size();i++)
-	{
-		sumCpu+=ServerList[i].cpu_num*particle.position_[i];
-		sumMem+=ServerList[i].memory_num*particle.position_[i];
-		sumCost+=(ServerList[i].purchase_cost+ServerList[i].maintenance_cost)*particle.position_[i];
-	}
-
-	if(sumCpu<required_cpu||sumMem<required_mem) return 0;
-
-	double f1=1/sumCost;
-	double f2=required_mem/sumMem;
-	double f3=required_cpu/sumCpu;
-	double f=f1+f2+f3;
-
-	return f;
-
-
-}
-
-
-void runPSO(int required_cpu, int required_mem)
-{
-	PSOPara psopara(ServerList.size(), true);
-	psopara.particle_num_ = 20;		// 粒子个数
-	psopara.max_iter_num_ = 300;	// 最大迭代次数
-
-	double *dtArr=new double[ServerList.size()];
-	for(int i=0;i<ServerList.size();i++)
-	{
-		*(dtArr+i)=1.0;
-	}
-	psopara.dt_=dtArr;
-	double *wstartArr=new double[ServerList.size()];
-	for(int i=0;i<ServerList.size();i++)
-	{
-		*(wstartArr+i)=0.9;
-	}
-	psopara.wstart_=wstartArr;
-	double *wendArr=new double[ServerList.size()];
-	for(int i=0;i<ServerList.size();i++)
-	{
-		*(wendArr+i)=0.4;
-	}
-	psopara.wend_=wendArr;
-	double *C1Arr=new double[ServerList.size()];
-	for(int i=0;i<ServerList.size();i++)
-	{
-		*(C1Arr+i)=1.49445;
-	}
-	psopara.C1_=C1Arr;
-	double *C2Arr=new double[ServerList.size()];
-	for(int i=0;i<ServerList.size();i++)
-	{
-		*(C2Arr+i)=1.49445;
-	}
-	psopara.C2_=C2Arr;
-
-	for(int i=0;i<ServerList.size();i++)
-	{
-		psopara.lower_bound_[i] = 0;
-		psopara.upper_bound_[i] = 100;
-	}
-
-
-	PSOOptimizer psooptimizer(&psopara, FitnessFunction, required_cpu, required_mem);
-
-	std::srand((unsigned int)time(0));
-	psooptimizer.InitialAllParticles();
-	double fitness = psooptimizer.all_best_fitness_;
-	double *result = new double[psooptimizer.max_iter_num_];
-
-	for (int i = 0; i < psooptimizer.max_iter_num_; i++)
-	{
-		psooptimizer.UpdateAllParticles();
-		result[i] = psooptimizer.all_best_fitness_;
-		std::cout << "第" << i << "次迭代结果：";
-		cout <<"[";
-		for(int j = 0; j != psopara.dim_; ++j){
-			std::cout<<psooptimizer.all_best_position_[j] << " ";
-		}
-		std::cout << "] , fitness = " << result[i] << std::endl;
-
-	}	
-
-}
-
-
 //主流程
 void process() {
 	
@@ -1294,17 +865,6 @@ void process() {
 		//对存量虚拟机进行迁移
 		full_loaded_migrate_vm(day_decision);
 		day_decision.W = day_decision.VM_migrate_vm_record.size();
-		#endif
-
-		#ifdef PSO
-		int required_cpu, required_mem;
-		cal_day_cpu_mem_requirement(Requests[t], required_cpu, required_mem);
-		//如果是负数，说明已有服务器可以满足现在的需求,不需要购买
-		if(required_mem < 0 or required_mem < 0){}
-		else{
-			runPSO(required_cpu, required_mem);
-			cout<<endl;
-		}
 		#endif
 
 		#ifdef BUY_SERVER_GREEDY
@@ -1330,7 +890,9 @@ void process() {
 		for (uint32_t i = 0; i != Requests[t].request_num; ++i) {
 		//不断处理请求，直至已有服务器无法满足
 		S_DeploymentInfo one_request_deployment_info;
-			
+			if(Requests[t].day_request[i].vm_id == 892850430){
+				cout<<endl;
+			}
 			//删除虚拟机
 			if (!Requests[t].day_request[i].is_add) {
 				assert(GlobalVMDeployTable.find(Requests[t].day_request[i].vm_id) != GlobalVMDeployTable.end());
@@ -1343,15 +905,15 @@ void process() {
 			//如果是增加虚拟机
 			//如果可以满足条件
 			#ifndef BUY_SERVER_GREEDY
-			#ifndef PSO
+			
 			if (best_fit(Requests[t].day_request[i], one_request_deployment_info)) {
 				day_decision.request_deployment_info.push_back(one_request_deployment_info);
 				continue;
 			};
 			#endif
-			#endif
 
 			#ifdef BUY_SERVER_GREEDY
+
 			//有可能仍出现虚拟机部署不下的情况，转化为普通贪心
 			if(!best_fit(Requests[t].day_request[i], one_request_deployment_info)){
 				const S_VM& vm = VMList[Requests[t].day_request[i].vm_type];
@@ -1368,14 +930,14 @@ void process() {
 
 
  			#ifndef BUY_SERVER_GREEDY 
-			 #ifndef PSO
-			//check_required_room(Requests[t], required_cpu, required_mem, i);
+
+			//check_required_room(Requests[t], requied_cpu, required_mem, i);
 			const S_VM& vm = VMList[Requests[t].day_request[i].vm_type];
 
 			//根据所需cpu and mem,购买服务器
 			My_servers.push_back(buy_server(vm.cpu_num, vm.memory_num, day_decision.server_bought_kind));
 			--i;//购买服务器后重新处理当前请求
-			#endif
+
 			#endif
 		}
 		day_decision.Q = day_decision.server_bought_kind.size();
