@@ -1,11 +1,14 @@
+//#pragma GCC optimize(2)
+//#pragma GCC optimize(3,"Ofast","inline")
 #define SUBMIT//是否提交
 //#define SIMILAR_NODE
-//#define BALANCE_NODE
 #define MIGRATE//原始迁移
 #define EARLY_STOPPING//迁移时短路判断 
-
+//#define DO_NODE_BALANCE
+//#define DEBUG
 //#define BUY_SERVER_GREEDY
-#include <stdlib.h>
+#include<cstdlib>
+#include<cstdio>
 #include <iostream>
 #include<string>
 #include<vector>
@@ -15,19 +18,20 @@
 #include<time.h>
 #include<cassert>
 #include<algorithm>
-
+#include<queue>
 enum E_Deploy_status{
 	dep_No = -1, dep_A, dep_B, dep_Both
 };
 
 //可调参数列表
 //最大迁出服务器比例
-const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.50f;
+const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.5f;
 
-const float TOTAL_COST_RATIO =0.85f; 
-const float BUY_SERVER_MAINTAINANCE_COST_RATIO = .9f;
-const float BUY_SERVER_PURCHASE_COST_RATIO = 45.0f;
-
+//购买服务器参数
+const float TOTAL_COST_RATIO =0.65f; 
+const float BUY_SERVER_MAINTAINANCE_COST_RATIO = 3.0f;
+const float BUY_SERVER_PURCHASE_COST_RATIO = 40.0f;
+const float cpu_mem_proportion_ratio = 100.0f;
 
 const int RANDOM_MAX = 10;
 const int RANDOM_MIN = 0;
@@ -131,15 +135,16 @@ typedef struct node{
 
 int32_t N;//可以采购的服务器类型
 int32_t M;//虚拟机类型数量
-int32_t T;//T天
+int32_t T;//总共T天
+int32_t K;//先给K天
 float GLOBAL_BALANCE_SCORE;//根据所有虚拟机请求得到的内存-核数比例
 
 vector<S_Server> ServerList;//用于存储所有可买的服务器种类信息
 unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
-vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
-vector<S_DayTotalDecisionInfo> Decisions;//所有的决策信息
+queue<S_DayRequest> Requests;//用于存储用户所有的请求信息
+
 unordered_map<uint32_t, uint32_t> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和部署的服务器序列号
-unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局虚拟机信息表，记录虚拟机id和对应的虚拟机其他信息
+unordered_map<uint32_t,  S_VM> GlobalVMRequestInfo;//全局虚拟机信息表，记录虚拟机id和对应的虚拟机其他信息
 unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
 
 //utils
@@ -148,29 +153,9 @@ unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id
 //*****************************************************************************************************
 //*****************************************************************************************************
 
-inline float get_global_balance_score(){
-	uint32_t cpu_num = 0;
-	uint32_t mem_num = 0;
-	for(int t = 0; t != T; ++t){
-		for(size_t i = 0; i != Requests[t].request_num; ++i){
-			cpu_num += VMList[Requests[t].day_request[i].vm_type].cpu_num;
-			mem_num += VMList[Requests[t].day_request[i].vm_type].memory_num;
-		}
-	}
-	
-	return  (float)(cpu_num) / mem_num;
-}
+inline void write_standard_output(const S_DayTotalDecisionInfo& day_decision);
 
-float get_day_balance_score(int32_t day_idx){
-	uint32_t cpu_num = 0;
-	uint32_t mem_num = 0;
-	for(size_t i = 0; i != Requests[day_idx].request_num; ++i){
-		cpu_num += VMList[Requests[day_idx].day_request[i].vm_type].cpu_num;
-		mem_num += VMList[Requests[day_idx].day_request[i].vm_type].memory_num;
-	}
-
-	return  (float)(cpu_num) / mem_num;
-}
+void read_one_request();
 
 //生成每一天购买服务器的id，以及序列号跟id之间的映射表
 void server_seq_to_id(const S_DayTotalDecisionInfo& day_decision) {
@@ -498,7 +483,7 @@ vector<C_BoughtServer> My_servers;//已购买的服务器列表
 
 
 
-//综合随机购买
+//综合容量、价格购买
 inline C_BoughtServer buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<uint32_t>>& bought_server_kind) {
 
 		//找到一台服务器
@@ -511,7 +496,7 @@ inline C_BoughtServer buy_server(int32_t required_cpu, int32_t required_mem, map
 		//先找到所有可容纳当前请求的服务器型号
 		for(size_t i = 0; i != size; ++i){
 			if((ServerList[i].cpu_num / 2 >= required_cpu) and (ServerList[i].memory_num / 2 >= required_mem)){
-				accomadatable_seqs.push_back(i);
+				accomadatable_seqs.emplace_back(i);
 			}
 		}
 		//综合考虑价格和容量差，选择一台服务器
@@ -533,11 +518,11 @@ inline C_BoughtServer buy_server(int32_t required_cpu, int32_t required_mem, map
 		//记录购买了哪种服务器，并令相应记录+1
 
 		if (bought_server_kind.find(server.type) != bought_server_kind.end()) {
-			bought_server_kind[server.type].push_back(bought_server.seq);
+			bought_server_kind[server.type].emplace_back(bought_server.seq);
 		}
 		else {
 			vector<uint32_t> bought_server_seq_nums;
-			bought_server_seq_nums.push_back(bought_server.seq);
+			bought_server_seq_nums.emplace_back(bought_server.seq);
 			bought_server_kind.insert(pair<string, vector<uint32_t>>(server.type, bought_server_seq_nums));
 		}
 
@@ -697,7 +682,7 @@ inline bool worst_fit(const S_Request & request, S_DeploymentInfo & one_deployme
 //返回当天最大可用迁移次数
 inline int32_t get_max_migrate_num(){
 	size_t num = GlobalVMDeployTable.size();
-	return (int32_t)(num * 0.005);
+	return (int32_t)(num * 0.03);
 }
 
 //基本迁移操作
@@ -723,6 +708,7 @@ bool com_used_rate(C_BoughtServer* p_A, C_BoughtServer* p_B){
 bool com_node_used_balance_rate(C_BoughtServer& s1,  C_BoughtServer& s2){
 	return abs(s1.A_used_rate - s1.B_used_rate) < abs(s2.A_used_rate - s2.B_used_rate);
 }
+
 //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
 void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balance){
 
@@ -737,7 +723,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 
 	for(size_t i = 0; i != size; ++i){
 		p_server = &My_servers[i];
-		tmp_my_servers.push_back(p_server);
+		tmp_my_servers.emplace_back(p_server);
 	}
 
 	sort(tmp_my_servers.begin(), tmp_my_servers.end(), com_used_rate);	
@@ -769,7 +755,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 		server_it = p_out_server->deployed_vms.begin();		
 		server_end = p_out_server->deployed_vms.end();
 			for(;server_it != server_end; ++server_it){
-			cur_server_vm_info.push_back(pair<uint32_t,const S_VM*>(server_it->first, &VMList[server_it->second.vm_type]));
+			cur_server_vm_info.emplace_back(pair<uint32_t,const S_VM*>(server_it->first, &VMList[server_it->second.vm_type]));
 		}
 		sort(cur_server_vm_info.begin(), cur_server_vm_info.end(), com_VM);
 
@@ -786,7 +772,8 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 			//遍历所有迁入服务器
 			//i只是当前迁入服务器遍历序号，并不是服务器序列号
 			const C_BoughtServer *in_server = nullptr;
-			for(size_t in = tmp_my_servers.size() - 1; in > out; --in){
+			size_t size = tmp_my_servers.size();
+			for(int32_t in = (int32_t)(size - 1); in > out; --in){
 				//把当前虚拟机迁移到当前服务器上
 				uint32_t most_used_server_seq = tmp_my_servers[in]->seq;
 				in_server = &My_servers[most_used_server_seq];
@@ -804,7 +791,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 					//迁移信息记录
 					S_MigrationInfo one_migration_info;
 					migrate_vm(stat, tmp_it->first, most_used_server_seq, one_migration_info);
-					day_decision.VM_migrate_vm_record.push_back(one_migration_info);
+					day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
 					if(--remaining_migrate_vm_num == 0)return;
 					break;
 				}
@@ -850,7 +837,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 					//迁移信息记录
 					S_MigrationInfo one_migration_info;
 					migrate_vm(stat, tmp_it->first, most_used_server_seq, one_migration_info);
-					day_decision.VM_migrate_vm_record.push_back(one_migration_info);
+					day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
 					if(--remaining_migrate_vm_num == 0)return;
 					break;
 					
@@ -865,7 +852,8 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 		#endif
 		++out;
 	}while(out != max_out);
-
+	
+	#ifdef DO_NODE_BALANCE
 	//对所有服务器做节点均衡
 	assert(remaining_migrate_vm_num > 0);
 	size_t server_size = My_servers.size();
@@ -876,125 +864,82 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 			if(--remaining_migrate_vm_num == 0)return;
 		}
 	}
+	#endif
 }
 
 //主流程
 void process() {
-	
-	for (int32_t t = 0; t != T; ++t) {
-		#ifdef BALANCE_NODE
-		GLOBAL_BALANCE_SCORE = get_day_balance_score(t);
-		#endif
-
-		S_DayTotalDecisionInfo day_decision;
+	int32_t t = 0;
+	do{
+	S_DayTotalDecisionInfo day_decision;
 		#ifndef SUBMIT
-		cout<<"process"<<t<<" day"<<endl;
+		std::cout<<"process"<<t<<" day"<<endl;
 		#endif
-
+		
+		const S_DayRequest& day_request = Requests.front();
+		#ifdef MIGRATE
+		//根据当天的请求是单节点多还是双节点多来判断是要做节点均衡还是不均衡
 		int32_t double_node_add_num = 0;
 		int32_t add_request_num = 0;
-		const S_DayRequest& day_request = Requests[t];
-		for(int32_t i = 0; i != day_request.request_num; ++i){
+
+		for(uint32_t i = 0; i != day_request.request_num; ++i){
 			if(!day_request.day_request[i].is_add)continue;
 			double_node_add_num = VMList[day_request.day_request[i].vm_type].is_double_node ? double_node_add_num + 1 : double_node_add_num;
 			++add_request_num;
 		}
 		bool do_balance = double_node_add_num > add_request_num / 2 ? true :false;
 
-
-		#ifdef MIGRATE
 		//对存量虚拟机进行迁移
 		full_loaded_migrate_vm(day_decision, do_balance);
 		day_decision.W = day_decision.VM_migrate_vm_record.size();
 		#endif
+		for (uint32_t i = 0; i != day_request.request_num; ++i) {
 
-		#ifdef BUY_SERVER_GREEDY
-			int required_cpu, required_mem;
-			cal_day_cpu_mem_requirement(Requests[t], required_cpu, required_mem);
-			//如果是负数，说明已有服务器可以满足现在的需求,不需要购买
-			if(required_mem < 0 or required_cpu < 0){}
-			else{			
-				//存储购买序列号	
-				vector<uint32_t> seqs;
-				pair<int32_t, int32_t> purchase_info = greedy_buy_day_servers(required_cpu, required_mem);
-			
-				for(int i = 0; i != purchase_info.first; ++i){
-					C_BoughtServer server = ServerList[purchase_info.second];
-				
-					seqs.push_back(server.seq);
-					My_servers.push_back(server);
-				}
-				day_decision.server_bought_kind.insert(pair<string, vector<uint32_t> >(ServerList[purchase_info.second].type, seqs));
-			}
-		#endif
-
-		for (uint32_t i = 0; i != Requests[t].request_num; ++i) {
 		//不断处理请求，直至已有服务器无法满足
 		S_DeploymentInfo one_request_deployment_info;
-			if(Requests[t].day_request[i].vm_id == 892850430){
-				cout<<endl;
-			}
+			const S_Request & one_request = day_request.day_request[i];
 			//删除虚拟机
-			if (!Requests[t].day_request[i].is_add) {
-				assert(GlobalVMDeployTable.find(Requests[t].day_request[i].vm_id) != GlobalVMDeployTable.end());
-				int32_t cur_server_seq = GlobalVMDeployTable[Requests[t].day_request[i].vm_id];
+			if (!one_request.is_add) {
+				assert(GlobalVMDeployTable.find(one_request.vm_id) != GlobalVMDeployTable.end());
+				int32_t cur_server_seq = GlobalVMDeployTable[one_request.vm_id];
 				My_servers[cur_server_seq].removeVM(
-					Requests[t].day_request[i].vm_id, Requests[t].day_request[i].vm_type);
+					one_request.vm_id, one_request.vm_type);
 				continue;
 			}
 
 			//如果是增加虚拟机
-			//如果可以满足条件
-			#ifndef BUY_SERVER_GREEDY
-			
-			if (best_fit(Requests[t].day_request[i], one_request_deployment_info)) {
-				day_decision.request_deployment_info.push_back(one_request_deployment_info);
+			if (best_fit(one_request, one_request_deployment_info)) {
+				day_decision.request_deployment_info.emplace_back(one_request_deployment_info);
 				continue;
 			};
-			#endif
 
-			#ifdef BUY_SERVER_GREEDY
-
-			//有可能仍出现虚拟机部署不下的情况，转化为普通贪心
-			if(!best_fit(Requests[t].day_request[i], one_request_deployment_info)){
-				const S_VM& vm = VMList[Requests[t].day_request[i].vm_type];
-				//根据所需cpu and mem,购买服务器
-				My_servers.push_back(buy_server(vm.cpu_num, vm.memory_num, day_decision.server_bought_kind));
-				//再次处理此请求
-				bool status = best_fit(Requests[t].day_request[i], one_request_deployment_info);
-				assert(status == true);
-			}
-			//到这一步保证当前虚拟机已经部署
-			day_decision.request_deployment_info.push_back(one_request_deployment_info);
-			continue;
-			#endif
-
-
- 			#ifndef BUY_SERVER_GREEDY 
-
-			//check_required_room(Requests[t], requied_cpu, required_mem, i);
-			const S_VM& vm = VMList[Requests[t].day_request[i].vm_type];
+			const S_VM& vm = VMList[one_request.vm_type];
 
 			//根据所需cpu and mem,购买服务器
-			My_servers.push_back(buy_server(vm.cpu_num, vm.memory_num, day_decision.server_bought_kind));
+			My_servers.emplace_back(buy_server(vm.cpu_num, vm.memory_num, day_decision.server_bought_kind));
 			--i;//购买服务器后重新处理当前请求
-
-			#endif
 		}
+		Requests.pop();
+
 		day_decision.Q = day_decision.server_bought_kind.size();
 		server_seq_to_id(day_decision);
+		write_standard_output(day_decision);
+
+		if(t != T - K){
+		read_one_request();
+		++t;
+		}
 		
-		Decisions.push_back(day_decision);
-	}
+	}while(Requests.size());
 	/*
 	freopen("bought_server_ids.txt", "w", stdout);
 	
 	for (int32_t i = 0; i != T; ++i) {
-		cout << "(purchase, " << Decisions[i].Q << ")" << endl;
-		for (map<string, vector<uint32_t>>::iterator iter = Decisions[i].server_bought_kind.begin(); iter != Decisions[i].server_bought_kind.end(); ++iter) {
-			cout << "(" << iter->first << ", " << iter->second.size() << ")" << endl;
+		std::cout << "(purchase, " << day_decision.Q << ")" << endl;
+		for (map<string, vector<uint32_t>>::iterator iter = day_decision.server_bought_kind.begin(); iter != day_decision.server_bought_kind.end(); ++iter) {
+			std::cout << "(" << iter->first << ", " << iter->second.size() << ")" << endl;
 			for (int j = 0; j != iter->second.size(); ++j) {
-				cout << "server type:" << iter->first << "	" << "server seq:" << iter->second[j] << "   " << "server id:" << GlobalServerSeq2IdMapTable[iter->second[j]] << endl;
+				std::cout << "server type:" << iter->first << "	" << "server seq:" << iter->second[j] << "   " << "server id:" << GlobalServerSeq2IdMapTable[iter->second[j]] << endl;
 			}
 		}
 	}*/
@@ -1019,7 +964,7 @@ inline vector<string> split( string& line, char pattern) {
 		pos = line.find(',', i);
 		if (pos < size) {
 			string s = line.substr(i, pos - i);
-			results.push_back(s);
+			results.emplace_back(s);
 			i = pos;
 		}
 	}
@@ -1029,7 +974,7 @@ inline vector<string> split( string& line, char pattern) {
 void read_standard_input() {
 #ifndef SUBMIT
 freopen("./training-1.txt", "r", stdin);
-#endif // !SUBMIT
+#endif 
 
 	
 	//优化io效率
@@ -1043,12 +988,12 @@ freopen("./training-1.txt", "r", stdin);
 	GlobalVMRequestInfo.rehash(1000000);
 	GlobalVMDeployTable.reserve(1000000);
 	GlobalVMDeployTable.rehash(1000000);
-	cin >> N ;
+	std::cin >> N ;
 	ServerList.reserve(N + 100);
-	cin.get();
+	std::cin.get();
 	S_Server server;
 	for (int32_t i = 0; i != N; ++i) {
-		getline(cin, line);
+		getline(std::cin, line);
 
 		vector <string> results = split(line, ',');
 		server.type = results[0];
@@ -1057,14 +1002,14 @@ freopen("./training-1.txt", "r", stdin);
 		server.purchase_cost = stoi(results[3]);
 		server.maintenance_cost = stoi(results[4]);
 
-		ServerList.push_back(server);
+		ServerList.emplace_back(server);
 	}
 
-	cin >> M;
-	cin.get();
+	std::cin >> M;
+	std::cin.get();
 	S_VM vm;
 	for (int32_t i = 0; i != M; ++i) {
-		getline(cin, line);
+		getline(std::cin, line);
 		vector<string> results = split(line, ',');
 		vm.type = results[0];
 		vm.cpu_num = stoi(results[1]);
@@ -1076,17 +1021,18 @@ freopen("./training-1.txt", "r", stdin);
 		VMList.insert(pair<string, S_VM>(vm.type, vm));
 	}
 
-	cin >> T;
-	cin.get();
-	for (int32_t i = 0; i != T; ++i) {
+	std::cin >> T;
+	std::cin >> K;
+	std::cin.get();
+	for (int32_t i = 0; i != K; ++i) {
 		int32_t day_request_num;
-		cin >> day_request_num;
-		cin.get();
+		std::cin >> day_request_num;
+		std::cin.get();
 		S_DayRequest day_request;
 		day_request.request_num = day_request_num;
 
 		for (int32_t j = 0; j != day_request_num; ++j) {
-			getline(cin, line);
+			getline(std::cin, line);
 			S_Request one_request;
 			vector<string>results = split(line, ',');
 			if (results[0] == "add") {
@@ -1099,52 +1045,82 @@ freopen("./training-1.txt", "r", stdin);
 				one_request.is_add = false;
 				one_request.vm_id = stoi(results[1]);
 				one_request.vm_type = GlobalVMRequestInfo[one_request.vm_id].type;
-				day_request.delete_op_idxs.push_back(j);
+				day_request.delete_op_idxs.emplace_back(j);
 			}
 
-			day_request.day_request.push_back(one_request);
+			day_request.day_request.emplace_back(one_request);
 		}
 
-		Requests.push_back(day_request);
+		Requests.push(day_request);
 	}
 }
 
-void write_standard_output() {
-#ifndef SUBMIT
-	freopen("out.txt", "w", stdout);
-#endif
-	for (int32_t i = 0; i != T; ++i) {
-		cout << "(purchase, " << Decisions[i].Q << ")" << endl;
-		for (map<string, vector<uint32_t>>::iterator iter = Decisions[i].server_bought_kind.begin(); iter != Decisions[i].server_bought_kind.end(); ++iter) {
-			cout << "(" << iter->first << ", " << iter->second.size() << ")" << endl;
-		}
+inline void write_standard_output(const S_DayTotalDecisionInfo& day_decision) {
 
-		cout << "(migration, " << Decisions[i].W << ")" << endl;
-		for (int32_t j = 0; j != Decisions[i].W; ++j) {
-			if (Decisions[i].VM_migrate_vm_record[j].is_double_node) {
-				cout << "(" << Decisions[i].VM_migrate_vm_record[j].vm_id << ", " << GlobalServerSeq2IdMapTable[Decisions[i].VM_migrate_vm_record[j].server_seq] << ")" << endl;
-			}
-			else {
-				cout << "(" << Decisions[i].VM_migrate_vm_record[j].vm_id << ", " << GlobalServerSeq2IdMapTable[Decisions[i].VM_migrate_vm_record[j].server_seq] <<
-					", " << Decisions[i].VM_migrate_vm_record[j].node_name << ")" << endl;
-			}
-		}
 
-		for (size_t k = 0; k != Decisions[i].request_deployment_info.size(); ++k) {
-			if (Decisions[i].request_deployment_info[k].is_double_node) {
-				cout << "(" << GlobalServerSeq2IdMapTable[Decisions[i].request_deployment_info[k].server_seq] << ")";
-			}
-			else {
-				cout << "(" << GlobalServerSeq2IdMapTable[Decisions[i].request_deployment_info[k].server_seq] << ", " << Decisions[i].request_deployment_info[k].node_name
-					<< ")";
-			}
-			if ((i == T - 1) and (k == Decisions[i].request_deployment_info.size() - 1))break;
-			cout << endl;
-		}
-
+	std::cout << "(purchase, " << day_decision.Q << ")" << endl;
+	for (map<string, vector<uint32_t>>::const_iterator iter = day_decision.server_bought_kind.begin(); iter != day_decision.server_bought_kind.end(); ++iter) {
+		std::cout << "(" << iter->first << ", " << iter->second.size() << ")" << endl;
 	}
+
+	std::cout << "(migration, " << day_decision.W << ")" << endl;
+	for (int32_t j = 0; j != day_decision.W; ++j) {
+		if (day_decision.VM_migrate_vm_record[j].is_double_node) {
+			std::cout << "(" << day_decision.VM_migrate_vm_record[j].vm_id << ", " << GlobalServerSeq2IdMapTable[day_decision.VM_migrate_vm_record[j].server_seq] << ")" << endl;
+		}
+		else {
+			std::cout << "(" << day_decision.VM_migrate_vm_record[j].vm_id << ", " << GlobalServerSeq2IdMapTable[day_decision.VM_migrate_vm_record[j].server_seq] <<
+				", " << day_decision.VM_migrate_vm_record[j].node_name << ")" << endl;
+		}
+	}
+
+	for (size_t k = 0; k != day_decision.request_deployment_info.size(); ++k) {
+		if (day_decision.request_deployment_info[k].is_double_node) {
+			std::cout << "(" << GlobalServerSeq2IdMapTable[day_decision.request_deployment_info[k].server_seq] << ")";
+		}
+		else {
+			std::cout << "(" << GlobalServerSeq2IdMapTable[day_decision.request_deployment_info[k].server_seq] << ", " << day_decision.request_deployment_info[k].node_name
+				<< ")";
+		}
+		std::cout << endl;
+	}
+	fflush(stdout);
 }
 
+inline void read_one_request(){
+	//优化io效率
+	std::ios::sync_with_stdio(false);
+    std::cin.tie(0);
+	string line;	
+	int32_t day_request_num;
+	std::cin >> day_request_num;
+
+	std::cin.get();
+	S_DayRequest day_request;
+	day_request.request_num = day_request_num;
+
+	for (int32_t j = 0; j != day_request_num; ++j) {
+		getline(std::cin, line);
+		S_Request one_request;
+		vector<string>results = split(line, ',');
+		if (results[0] == "add") {
+			one_request.is_add = true;
+			one_request.vm_type = results[1].erase(0, 1);
+			one_request.vm_id = stoi(results[2]);
+			GlobalVMRequestInfo.insert(pair<uint32_t,  S_VM&>(one_request.vm_id, VMList[one_request.vm_type]));
+		}
+		else {
+			one_request.is_add = false;
+			one_request.vm_id = stoi(results[1]);
+			one_request.vm_type = GlobalVMRequestInfo[one_request.vm_id].type;
+			day_request.delete_op_idxs.emplace_back(j);
+		}
+
+		day_request.day_request.emplace_back(one_request);
+	}
+
+	Requests.push(day_request);
+}
 
 int main()
 {	
@@ -1152,16 +1128,12 @@ int main()
 	//int end = 0;
 	read_standard_input();
 	//end = clock();
-	//cout<<"read input cost: ";
-	//cout<< (double)(end - start) / CLOCKS_PER_SEC << endl;
+	//std::cout<<"read input cost: ";
+	//std::cout<< (double)(end - start) / CLOCKS_PER_SEC << endl;
 	process();
 	//start = clock();
-	//cout<<"process cost: ";
-	//cout<< (double)(start - end) / CLOCKS_PER_SEC <<endl;
-	write_standard_output();
-	//end = clock();
-	//cout<< "write output cost: ";
-	//cout<< (double)(end - start) / CLOCKS_PER_SEC <<endl;
-	fflush(stdout);
+	//std::cout<<"process cost: ";
+	//std::cout<< (double)(start - end) / CLOCKS_PER_SEC <<endl;
+	
 	return 0;
 }
