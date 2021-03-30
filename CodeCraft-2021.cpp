@@ -26,8 +26,8 @@ enum E_Deploy_status{
 //最大迁出服务器比例
 const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.5f;
 
-const float TOTAL_COST_RATIO =1.0f; 
-const float BUY_SERVER_MAINTAINANCE_COST_RATIO = 1.0f;
+const float TOTAL_COST_RATIO =0.65f; 
+const float BUY_SERVER_MAINTAINANCE_COST_RATIO = 3.0f;
 const float BUY_SERVER_PURCHASE_COST_RATIO = 40.0f;
 
 
@@ -141,7 +141,7 @@ unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
 vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 vector<S_DayTotalDecisionInfo> Decisions;//所有的决策信息
 unordered_map<uint32_t, uint32_t> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和部署的服务器序列号
-unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局虚拟机信息表，记录虚拟机id和对应的虚拟机其他信息
+unordered_map<uint32_t,  S_VM> GlobalVMRequestInfo;//全局虚拟机信息表，记录虚拟机id和对应的虚拟机其他信息
 unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
 
 //utils
@@ -516,7 +516,6 @@ inline C_BoughtServer buy_server(int32_t required_cpu, int32_t required_mem, map
 				accomadatable_seqs.push_back(i);
 			}
 		}
-		vector<float> distances;//用于记录所有的dis
 		//综合考虑价格和容量差，选择一台服务器
 		size = accomadatable_seqs.size();
 		for(size_t i = 0; i != size; ++i){
@@ -524,28 +523,14 @@ inline C_BoughtServer buy_server(int32_t required_cpu, int32_t required_mem, map
 			float vol_dis = pow(ServerList[i].cpu_num - required_cpu, 2) + pow(ServerList[i].memory_num - required_mem, 2);
 			float purchase_cost = BUY_SERVER_MAINTAINANCE_COST_RATIO * ServerList[accomadatable_seqs[i]].maintenance_cost + BUY_SERVER_PURCHASE_COST_RATIO * ServerList[accomadatable_seqs[i]].purchase_cost;
 			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost;
-			distances.push_back(total_dis);
+
 			if(total_dis < min_dis){
 				min_dis = total_dis;
 				min_idx = i;
 			}
 		}
 
-		float second_idx = 0;
-		float second_dis = MAXFLOAT;
-		size = distances.size();
-		for(size_t i = 0; i != size; ++i){
-			if(i != (size_t)(min_idx) && distances[i] < second_dis){
-				second_dis = distances[i];
-				second_idx = i;
-			}
-		}
-		//生成1-10的随机数，如果为1-7则选择最好的，如果为8-10则选择次好的	
-		float bought_seq;
-		bought_seq	 = (rand() % (RANDOM_MAX - RANDOM_MIN)  + RANDOM_MIN) < CHOSE_BEST_RATIO ? accomadatable_seqs[min_idx] : accomadatable_seqs[second_idx];
-	
-
-		const S_Server& server =  ServerList[bought_seq];
+		const S_Server& server =  ServerList[accomadatable_seqs[min_idx]];
 		C_BoughtServer bought_server(server);
 		//记录购买了哪种服务器，并令相应记录+1
 
@@ -740,6 +725,7 @@ bool com_used_rate(C_BoughtServer* p_A, C_BoughtServer* p_B){
 bool com_node_used_balance_rate(C_BoughtServer& s1,  C_BoughtServer& s2){
 	return abs(s1.A_used_rate - s1.B_used_rate) < abs(s2.A_used_rate - s2.B_used_rate);
 }
+
 //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
 void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balance){
 
@@ -908,6 +894,7 @@ void process() {
 		cout<<"process"<<t<<" day"<<endl;
 		#endif
 
+		//根据当天的请求是单节点多还是双节点多来判断是要做节点均衡还是不均衡
 		int32_t double_node_add_num = 0;
 		int32_t add_request_num = 0;
 		const S_DayRequest& day_request = Requests[t];
