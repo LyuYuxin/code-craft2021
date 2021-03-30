@@ -1,5 +1,3 @@
-#pragma GCC optimize(2)
-#pragma GCC optimize(3,"Ofast","inline")
 #define SUBMIT//是否提交
 //#define SIMILAR_NODE
 //#define BALANCE_NODE
@@ -24,11 +22,11 @@ enum E_Deploy_status{
 
 //可调参数列表
 //最大迁出服务器比例
-const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.5f;
+const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.50f;
 
-const float TOTAL_COST_RATIO =0.65f; 
-const float BUY_SERVER_MAINTAINANCE_COST_RATIO = 3.0f;
-const float BUY_SERVER_PURCHASE_COST_RATIO = 40.0f;
+const float TOTAL_COST_RATIO =0.85f; 
+const float BUY_SERVER_MAINTAINANCE_COST_RATIO = .9f;
+const float BUY_SERVER_PURCHASE_COST_RATIO = 45.0f;
 
 
 const int RANDOM_MAX = 10;
@@ -141,7 +139,7 @@ unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
 vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 vector<S_DayTotalDecisionInfo> Decisions;//所有的决策信息
 unordered_map<uint32_t, uint32_t> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和部署的服务器序列号
-unordered_map<uint32_t,  S_VM> GlobalVMRequestInfo;//全局虚拟机信息表，记录虚拟机id和对应的虚拟机其他信息
+unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局虚拟机信息表，记录虚拟机id和对应的虚拟机其他信息
 unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
 
 //utils
@@ -725,7 +723,6 @@ bool com_used_rate(C_BoughtServer* p_A, C_BoughtServer* p_B){
 bool com_node_used_balance_rate(C_BoughtServer& s1,  C_BoughtServer& s2){
 	return abs(s1.A_used_rate - s1.B_used_rate) < abs(s2.A_used_rate - s2.B_used_rate);
 }
-
 //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
 void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balance){
 
@@ -894,7 +891,6 @@ void process() {
 		cout<<"process"<<t<<" day"<<endl;
 		#endif
 
-		//根据当天的请求是单节点多还是双节点多来判断是要做节点均衡还是不均衡
 		int32_t double_node_add_num = 0;
 		int32_t add_request_num = 0;
 		const S_DayRequest& day_request = Requests[t];
