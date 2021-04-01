@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 //#pragma GCC optimize(2)
 //#pragma GCC optimize(3,"Ofast","inline")
 //#define SUBMIT//是否提交
@@ -135,19 +136,31 @@ public:
 template<class _Ty>
 struct less_BoughtServer
 {
-	bool operator()(const _Ty& _Left, const _Ty& _Right) const
+	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
 	{
-		return _Left->get_double_node_avail_resources() < _Right->get_double_node_avail_resources();
+		int32_t l_resources = p_Left->get_double_node_avail_resources();
+		int32_t r_resources = p_Right->get_double_node_avail_resources();
+
+		//二级比较，如果值相等，就进一步比较地址值，保证不出现重复key
+		if (l_resources != r_resources) {
+			return l_resources < r_resources;
+		}
+		return p_Left < p_Right;
 	}
 };
 
 
-
+template<class _Ty>
 struct less_SingleNode
 {
-	bool operator()(const C_node* p_Left, const C_node* p_Right) const
+	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
 	{
-		return p_Left->remaining_cpu_num + p_Left->remaining_memory_num < p_Right->remaining_cpu_num + p_Right->remaining_memory_num;
+		//同上仿函数
+		if (p_Left->remaining_cpu_num + p_Left->remaining_memory_num != p_Right->remaining_cpu_num + p_Right->remaining_memory_num) {
+			return p_Left->remaining_cpu_num + p_Left->remaining_memory_num < p_Right->remaining_cpu_num + p_Right->remaining_memory_num;
+		}
+		return p_Left < p_Right;
+
 	}
 };
 
@@ -284,7 +297,7 @@ typedef struct DayTotalDecisionInfo{
 
 vector<C_BoughtServer*> My_servers;//已购买的服务器列表
 map<C_BoughtServer*, uint32_t, less_BoughtServer<C_BoughtServer *> > DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
-map<C_node*, uint32_t, less_SingleNode> SingleNodeTable;//将所有服务器的节点组织成一个单节点表， 值为服务器seq
+map<C_node*, uint32_t, less_SingleNode<C_node*> > SingleNodeTable;//将所有服务器的节点组织成一个单节点表， 值为服务器seq
 unordered_map<uint32_t, S_DeploymentInfo> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和相应的部署信息
 unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
 unordered_map<uint32_t,  S_VM> GlobalVMRequestInfo;
@@ -339,12 +352,8 @@ void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_i
 			s->B->remaining_cpu_num -= vm.half_cpu_num;
 
 			//更新map
-			SingleNodeTable.erase(s->A);
-			SingleNodeTable.erase(s->B);
 			SingleNodeTable.insert(pair<C_node*, uint32_t>(s->A, server_seq));
 			SingleNodeTable.insert(pair<C_node*, uint32_t>(s->B, server_seq));
-
-			DoubleNodeTable.erase(s);
 			DoubleNodeTable.insert(pair<C_BoughtServer *, uint32_t>(s, server_seq));
 
 		}
@@ -354,10 +363,7 @@ void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_i
 			s->A->remaining_cpu_num -= vm.cpu_num;
 			s->A->remaining_memory_num -= vm.memory_num;
 
-			SingleNodeTable.erase(s->A);
 			SingleNodeTable.insert(pair<C_node*, uint32_t>(s->A, server_seq));
-
-			DoubleNodeTable.erase(s);
 			DoubleNodeTable.insert(pair<C_BoughtServer *, uint32_t>(s, server_seq));
 		}
 		else if(node == s->B){
@@ -365,10 +371,7 @@ void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_i
 			s->B->remaining_memory_num -= vm.memory_num;
 			s->B->remaining_cpu_num -= vm.cpu_num;
 
-			SingleNodeTable.erase(s->B);
 			SingleNodeTable.insert(pair<C_node*, uint32_t>(s->B, server_seq));
-
-			DoubleNodeTable.erase(s);
 			DoubleNodeTable.insert(pair<C_BoughtServer *, uint32_t>(s, server_seq));
 		}
 
@@ -458,12 +461,9 @@ void removeVM(uint32_t vm_id, uint32_t server_seq) {
 			s->B->remaining_cpu_num += vm_info->half_cpu_num;
 			s->A->remaining_memory_num += vm_info->half_mem_num;
 			s->B->remaining_memory_num += vm_info->half_mem_num;
-			SingleNodeTable.erase(s->B);
-			SingleNodeTable.erase(s->A);
+
 			SingleNodeTable.insert(pair<C_node*, uint32_t>(s->A, server_seq));
 			SingleNodeTable.insert(pair<C_node*, uint32_t>(s->B, server_seq));
-
-			DoubleNodeTable.erase(s);
 			DoubleNodeTable.insert(pair<C_BoughtServer *, uint32_t>(s, server_seq));
 
 		}
@@ -471,19 +471,14 @@ void removeVM(uint32_t vm_id, uint32_t server_seq) {
 			if (deployment_info.node_name == "A") {
 				s->A->remaining_cpu_num += vm_info->cpu_num;
 				s->A->remaining_memory_num += vm_info->memory_num;
-				SingleNodeTable.erase(s->A);
+
 				SingleNodeTable.insert(pair<C_node*, uint32_t>(s->A, server_seq));
-			
-				DoubleNodeTable.erase(s);
 				DoubleNodeTable.insert(pair<C_BoughtServer *, uint32_t>(s, server_seq));
 			}
 			else {
 				s->B->remaining_memory_num += vm_info->memory_num;
 				s->B->remaining_cpu_num += vm_info->cpu_num;
-				SingleNodeTable.erase(s->B);
 				SingleNodeTable.insert(pair<C_node*, uint32_t>(s->B, server_seq));
-			
-				DoubleNodeTable.erase(s);
 				DoubleNodeTable.insert(pair<C_BoughtServer *, uint32_t>(s, server_seq));
 			}
 		}
@@ -544,9 +539,9 @@ inline void buy_server(int32_t required_cpu, int32_t required_mem, map<string, v
 
 		//更新三个表
 		My_servers.emplace_back(p_bought_server);
-		SingleNodeTable.insert(make_pair(p_bought_server->A, p_bought_server->seq));
-		SingleNodeTable.insert(make_pair(p_bought_server->B, p_bought_server->seq));
-		DoubleNodeTable.insert(make_pair(p_bought_server, p_bought_server->seq));
+		SingleNodeTable.emplace(p_bought_server->A, p_bought_server->seq);
+		SingleNodeTable.emplace(p_bought_server->B, p_bought_server->seq);
+		DoubleNodeTable.emplace(p_bought_server, p_bought_server->seq);
 	
 		//记录购买了哪种服务器，并更新相应决策记录
 		if (bought_server_kind.find(server.type) != bought_server_kind.end()) {
@@ -569,8 +564,6 @@ inline void buy_server(int32_t required_cpu, int32_t required_mem, map<string, v
 
 inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deployment_info){
 	assert(request.is_add);
-	size_t size = My_servers.size();
-	if(size == 0)return false;
 	const S_VM& vm = VMList[request.vm_type];
 	if(!vm.is_double_node){
 		C_node * fake_node = new C_node(vm);
@@ -580,11 +573,10 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		map<C_node*, uint32_t>::iterator fake_it = SingleNodeTable.find(fake_node);
 		map<C_node*, uint32_t>::iterator right_it = fake_it;
 
-		while(right_it != SingleNodeTable.end()){
-			if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_memory_num >= vm.half_mem_num){
+		while(++right_it != SingleNodeTable.end()){
+			if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_memory_num >= vm.memory_num){
 				break;
 			}	
-			++right_it;
 		}
 		//如果当前无节点可以容纳此虚拟机
 		if(right_it == SingleNodeTable.end()){
@@ -593,9 +585,16 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 			return false;
 		}
 		else{
-			deployVM(request.vm_id,right_it->second, one_deployment_info, right_it->first);
+			uint32_t server_seq = right_it->second;
+			C_node* node = right_it->first;
+
+			DoubleNodeTable.erase(My_servers[right_it->second]);
+			SingleNodeTable.erase(right_it);
 			SingleNodeTable.erase(fake_it);
 			delete fake_node;
+
+			deployVM(request.vm_id,server_seq, one_deployment_info, node);
+
 			return true;
 		}
 	}
@@ -604,7 +603,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		DoubleNodeTable.insert(pair<C_BoughtServer*, uint32_t>(fake_server, 0));
 		map<C_BoughtServer*, uint32_t>::iterator fake_it = DoubleNodeTable.find(fake_server);
 		map<C_BoughtServer*, uint32_t>::iterator right_it = fake_it;
-		while(right_it != DoubleNodeTable.end()){
+		while(++right_it != DoubleNodeTable.end()){
 			if(right_it->first->A->remaining_cpu_num >= vm.half_cpu_num &&
 			right_it->first->B->remaining_cpu_num >= vm.half_cpu_num&&
 			right_it->first->A->remaining_memory_num >= vm.half_mem_num&&
@@ -618,9 +617,15 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 			return false;
 		}
 		else{
-			deployVM(request.vm_id, right_it->second, one_deployment_info);
+			uint32_t server_seq = right_it->second;
+
+			SingleNodeTable.erase(right_it->first->A);
+			SingleNodeTable.erase(right_it->first->B);
+			DoubleNodeTable.erase(right_it);
 			DoubleNodeTable.erase(fake_it);
 			delete fake_server;
+
+			deployVM(request.vm_id, server_seq, one_deployment_info);
 			return true;
 		}
 	}
@@ -865,8 +870,9 @@ void process() {
 			//根据所需cpu and mem,购买服务器
 			buy_server(vm.cpu_num, vm.memory_num, day_decision.server_bought_kind);
 			
-			--i;//购买服务器后重新处理当前请求
-		}
+			best_fit(one_request, one_request_deployment_info);//购买服务器后重新处理当前请求
+			day_decision.request_deployment_info.emplace_back(one_request_deployment_info);
+	}
 		Requests.pop();
 
 		day_decision.Q = day_decision.server_bought_kind.size();
