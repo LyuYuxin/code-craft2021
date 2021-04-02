@@ -1,6 +1,12 @@
 #pragma once
 #define _CRT_SECURE_NO_WARNINGS
 
+#define SUBMIT//是否提交
+//#define MIGRATE//是否迁移
+#define EARLY_STOPPING//是否迁移时短路判断 
+//#define DO_NODE_BALANCE
+
+
 #include<cstdlib>
 #include<cstdio>
 #include <iostream>
@@ -112,6 +118,32 @@ public:
 };
 
 
+class C_BoughtServer {
+public:
+	C_BoughtServer(const S_Server& server);
+
+	//用于构造假节点
+	C_BoughtServer(const S_VM& vm);
+	~C_BoughtServer();
+
+	static float cal_node_similarity(int m1, int c1, int m2, int c2);
+
+	bool operator<(C_BoughtServer& bought_server);
+
+	//返回A、B节点中可用cpu和内存较小值之和
+	int32_t get_double_node_avail_resources()const;
+
+	//计算总cpu内存资源利用率
+	float cal_total_resource_used_rate();
+
+	S_Server server_info;//此服务器的基本参数
+	C_node* A, * B;//两个节点的信息
+	uint32_t seq;//此服务器序列号，唯一标识
+	float total_resource_used_rate;//cpu和mem总使用率.针对服务器
+	static int32_t purchase_seq_num;//静态成员，用于存储当前已购买服务器总数，也用于给新买的服务器赋予序列号
+};
+
+
 template<class _Ty>
 struct less_BoughtServer
 {
@@ -143,43 +175,6 @@ struct less_SingleNode
 	}
 };
 
-class C_BoughtServer {
-public:
-	C_BoughtServer(const S_Server& server) :server_info(server), total_resource_used_rate(0)
-	{
-		seq = purchase_seq_num++;
-		A = new(C_node)(server);
-		B = new(C_node)(server);
-	}
-
-	//用于构造假节点
-	C_BoughtServer(const S_VM& vm) {
-		A = new(C_node)(vm, true);
-		B = new(C_node)(vm, true);
-	}
-
-	~C_BoughtServer()
-	{
-		delete A;
-		delete B;
-	}
-
-	static float cal_node_similarity(int m1, int c1, int m2, int c2);
-
-	bool operator<(C_BoughtServer& bought_server);
-
-	//返回A、B节点中可用cpu和内存较小值之和
-	int32_t get_double_node_avail_resources()const;
-
-	//计算总cpu内存资源利用率
-	float cal_total_resource_used_rate();
-
-	S_Server server_info;//此服务器的基本参数
-	C_node* A, * B;//两个节点的信息
-	uint32_t seq;//此服务器序列号，唯一标识
-	float total_resource_used_rate;//cpu和mem总使用率.针对服务器
-	static int32_t purchase_seq_num;//静态成员，用于存储当前已购买服务器总数，也用于给新买的服务器赋予序列号
-};
 
 
 //单个虚拟机部署信息

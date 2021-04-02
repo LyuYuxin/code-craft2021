@@ -20,6 +20,24 @@ extern unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局VMadd请求表�
 
 int32_t C_BoughtServer::purchase_seq_num = 0;//初始时，没有任何服务器，序列号从0开始，第一台服务器序列号为0
 
+C_BoughtServer::C_BoughtServer(const S_Server& server) :server_info(server), total_resource_used_rate(0)
+{
+	seq = purchase_seq_num++;
+	A = new(C_node)(server);
+	B = new(C_node)(server);
+}
+
+C_BoughtServer::C_BoughtServer(const S_VM& vm) {
+		A = new(C_node)(vm, true);
+		B = new(C_node)(vm, true);
+	}
+
+C_BoughtServer::~C_BoughtServer()
+	{
+		delete A;
+		delete B;
+	}
+
 float C_BoughtServer::cal_node_similarity(int m1, int c1, int m2, int c2) {
 	return float(pow((m1 - m2), 2) + pow((c1 - c2), 2));
 }

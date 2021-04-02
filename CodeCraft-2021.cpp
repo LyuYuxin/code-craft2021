@@ -1,13 +1,4 @@
-#include"codecraft/head.h"
-
-#define SUBMIT//是否提交
-//#define MIGRATE//是否迁移
-#define EARLY_STOPPING//是否迁移时短路判断 
-//#define DO_NODE_BALANCE
-
-
-using namespace std;
-
+#include "head.h"
 
 //可调参数列表
 
@@ -18,7 +9,7 @@ const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.5f;
 const float TOTAL_COST_RATIO =0.65f; 
 const float BUY_SERVER_MAINTAINANCE_COST_RATIO = 3.0f;
 const float BUY_SERVER_PURCHASE_COST_RATIO = 40.0f;
-const float cpu_mem_proportion_ratio = 100.0f;
+const float cpu_mem_proportion_ratio = 10000.0f;
 
 const int RANDOM_MAX = 10;
 const int RANDOM_MIN = 0;
@@ -219,7 +210,7 @@ void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<u
 		//找到一台服务器
 		size_t size = ServerList.size();
 		int min_idx = 0;
-		float min_dis = FLT_MAX;
+		float min_dis = MAXFLOAT;
 		vector<int> accomadatable_seqs;
 		
 		
