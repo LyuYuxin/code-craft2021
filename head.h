@@ -14,7 +14,7 @@
 
 #define _CRT_SECURE_NO_WARNINGS
 
-//#define SUBMIT//是否提交
+#define SUBMIT//是否提交
 //#define MIGRATE//是否迁移
 #define EARLY_STOPPING//是否迁移时短路判断 
 //#define DO_NODE_BALANCE

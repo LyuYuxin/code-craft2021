@@ -10,7 +10,6 @@ extern unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信
 extern vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 
 
-
 extern vector<C_BoughtServer*> My_servers;//已购买的服务器列表
 extern map<C_BoughtServer*, uint32_t, less_BoughtServer<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
 extern map<C_node*, uint32_t, less_SingleNode<C_node*> > SingleNodeTable;//将所有服务器的节点组织成一个单节点表， 值为服务器seq
