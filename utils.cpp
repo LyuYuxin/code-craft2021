@@ -7,7 +7,7 @@ extern int32_t K;//先给K天
 
 extern vector<S_Server> ServerList;//用于存储所有可买的服务器种类信息
 extern unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
-extern queue<S_DayRequest> Requests;//用于存储用户所有的请求信息
+extern vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 
 
 

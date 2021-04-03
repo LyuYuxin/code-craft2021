@@ -1,12 +1,4 @@
 #pragma once
-#define _CRT_SECURE_NO_WARNINGS
-
-#define SUBMIT//是否提交
-//#define MIGRATE//是否迁移
-#define EARLY_STOPPING//是否迁移时短路判断 
-//#define DO_NODE_BALANCE
-
-
 #include<cstdlib>
 #include<cstdio>
 #include <iostream>
@@ -19,6 +11,14 @@
 #include<cassert>
 #include<algorithm>
 #include<queue>
+
+#define _CRT_SECURE_NO_WARNINGS
+
+//#define SUBMIT//是否提交
+//#define MIGRATE//是否迁移
+#define EARLY_STOPPING//是否迁移时短路判断 
+//#define DO_NODE_BALANCE
+
 
 using namespace std;
 
@@ -207,7 +207,7 @@ extern int32_t K;//先给K天
 
 extern vector<S_Server> ServerList;//用于存储所有可买的服务器种类信息
 extern unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
-extern queue<S_DayRequest> Requests;//用于存储用户所有的请求信息
+extern vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 
 
 
@@ -233,6 +233,30 @@ bool com_used_rate(C_BoughtServer* p_A, C_BoughtServer* p_B);
 bool com_node_used_balance_rate(C_BoughtServer& s1, C_BoughtServer& s2);
 
 
+//部署虚拟机用
+void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_info,C_node* node = nullptr);
+
+//迁移虚拟机用部署函数
+void deployVM(int vm_id, uint32_t server_seq, S_MigrationInfo& one_migration_info, C_node* node = nullptr);
+
+//删除虚拟机
+void removeVM(uint32_t vm_id, uint32_t server_seq);
+
+//返回当天最大可用迁移次数
+inline int32_t get_max_migrate_num(){
+	size_t num = GlobalVMDeployTable.size();
+	return static_cast<int32_t>(num * 0.03);
+}
+
+//基本迁移操作
+inline void migrate_vm(uint32_t vm_id, uint32_t in_server_seq, S_MigrationInfo& one_migration_info, C_node* p_node = nullptr){
+	//原服务器删除此虚拟机
+	removeVM(vm_id, GlobalVMDeployTable[vm_id].server_seq);
+	//新服务器增加此虚拟机
+	deployVM(vm_id, in_server_seq, one_migration_info, p_node);
+
+}
+
 //生成每一天购买服务器的id，以及序列号跟id之间的映射表
 inline void server_seq_to_id(const S_DayTotalDecisionInfo& day_decision) {
 	static uint32_t idx = 0;
@@ -240,7 +264,7 @@ inline void server_seq_to_id(const S_DayTotalDecisionInfo& day_decision) {
 	map<string, vector<uint32_t>>::const_iterator end = day_decision.server_bought_kind.end();
 	for (; it != end; ++it) {
 		for (uint32_t j = 0; j != it->second.size(); ++j) {
-			GlobalServerSeq2IdMapTable.insert(pair<uint32_t, uint32_t>(it->second[j], idx));
+			GlobalServerSeq2IdMapTable.emplace(it->second[j], idx);
 			++idx;
 		}
 	}
@@ -312,7 +336,7 @@ inline void read_standard_input() {
 		vm.half_mem_num = vm.memory_num / 2;
 		vm.is_double_node = stoi(results[3]);
 
-		VMList.insert(pair<string, S_VM>(vm.type, vm));
+		VMList.emplace(vm.type, vm);
 	}
 
 	std::cin >> T;
@@ -333,7 +357,7 @@ inline void read_standard_input() {
 				one_request.is_add = true;
 				one_request.vm_type = results[1].erase(0, 1);
 				one_request.vm_id = stoi(results[2]);
-				GlobalVMRequestInfo.insert(pair<uint32_t, S_VM>(one_request.vm_id, VMList[one_request.vm_type]));
+				GlobalVMRequestInfo.emplace(one_request.vm_id, VMList[one_request.vm_type]);
 			}
 			else {
 				one_request.is_add = false;
@@ -345,7 +369,7 @@ inline void read_standard_input() {
 			day_request.day_request.emplace_back(one_request);
 		}
 
-		Requests.push(day_request);
+		Requests.emplace_back(day_request);
 	}
 }
 
@@ -401,7 +425,7 @@ inline void read_one_request() {
 			one_request.is_add = true;
 			one_request.vm_type = results[1].erase(0, 1);
 			one_request.vm_id = stoi(results[2]);
-			GlobalVMRequestInfo.insert(pair<uint32_t, S_VM>(one_request.vm_id, VMList[one_request.vm_type]));
+			GlobalVMRequestInfo.emplace(one_request.vm_id, VMList[one_request.vm_type]);
 		}
 		else {
 			one_request.is_add = false;
@@ -413,5 +437,5 @@ inline void read_one_request() {
 		day_request.day_request.emplace_back(one_request);
 	}
 
-	Requests.push(day_request);
+	Requests.emplace_back(day_request);
 }

@@ -6,14 +6,8 @@
 const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.5f;
 
 //购买服务器参数
-const float TOTAL_COST_RATIO =0.65f; 
-const float BUY_SERVER_MAINTAINANCE_COST_RATIO = 3.0f;
-const float BUY_SERVER_PURCHASE_COST_RATIO = 40.0f;
-const float cpu_mem_proportion_ratio = 10000.0f;
+const float TOTAL_COST_RATIO =15.0f; 
 
-const int RANDOM_MAX = 10;
-const int RANDOM_MIN = 0;
-const int CHOSE_BEST_RATIO = 10;//选择最适合的服务器的概率为0.1 * 此参数
 
 
 //全局变量定义
@@ -28,7 +22,7 @@ int32_t T;//总共T天
 int32_t K;//先给K天
 vector<S_Server> ServerList;//用于存储所有可买的服务器种类信息
 unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
-queue<S_DayRequest> Requests;//用于存储用户所有的请求信息
+vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 vector<C_BoughtServer*> My_servers;//已购买的服务器列表
 
 map<C_BoughtServer*, uint32_t, less_BoughtServer<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，键为指向已购买服务器的指针，值为服务器seq
@@ -41,7 +35,7 @@ unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局VMadd请求表，用�
 
 
 //部署虚拟机用
-void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_info,C_node* node = nullptr) {
+void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_info,C_node* node) {
 		const S_VM &vm = GlobalVMRequestInfo[vm_id];
 		C_BoughtServer* s = My_servers[server_seq];
 		if(node == nullptr){
@@ -87,7 +81,7 @@ void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_i
 	}
 
 //迁移虚拟机用部署函数
-void deployVM(int vm_id, uint32_t server_seq, S_MigrationInfo& one_migration_info, C_node* node = nullptr) {
+void deployVM(int vm_id, uint32_t server_seq, S_MigrationInfo& one_migration_info, C_node* node) {
 		const S_VM& vm = GlobalVMRequestInfo[vm_id];
 		S_DeploymentInfo one_deployment_info;
 		C_BoughtServer* s = My_servers[server_seq];
@@ -205,7 +199,7 @@ void removeVM(uint32_t vm_id, uint32_t server_seq) {
 	}
 
 //综合容量、价格购买
-void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<uint32_t>>& bought_server_kind) {
+void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<uint32_t>>& bought_server_kind, int32_t t) {
 
 		//找到一台服务器
 		size_t size = ServerList.size();
@@ -213,19 +207,22 @@ void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<u
 		float min_dis = MAXFLOAT;
 		vector<int> accomadatable_seqs;
 		
-		
 		//先找到所有可容纳当前请求的服务器型号
 		for(size_t i = 0; i != size; ++i){
 			if((ServerList[i].cpu_num / 2 >= required_cpu) and (ServerList[i].memory_num / 2 >= required_mem)){
 				accomadatable_seqs.emplace_back(i);
 			}
 		}
+
+
 		//综合考虑价格和容量差，选择一台服务器
 		size = accomadatable_seqs.size();
 		for(size_t i = 0; i != size; ++i){
 			//容量差距
 			float vol_dis = pow(ServerList[i].cpu_num - required_cpu, 2) + pow(ServerList[i].memory_num - required_mem, 2);
-			float purchase_cost = BUY_SERVER_MAINTAINANCE_COST_RATIO * ServerList[accomadatable_seqs[i]].maintenance_cost + BUY_SERVER_PURCHASE_COST_RATIO * ServerList[accomadatable_seqs[i]].purchase_cost;
+			
+			//服务器成本
+			float purchase_cost = (T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost;
 			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost;
 
 			if(total_dis < min_dis){
@@ -327,32 +324,12 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 }
 
 
-//返回当天最大可用迁移次数
-inline int32_t get_max_migrate_num(){
-	size_t num = GlobalVMDeployTable.size();
-	return (int32_t)(num * 0.03);
-}
 
-//基本迁移操作
-inline void migrate_vm(uint32_t vm_id, uint32_t in_server_seq, S_MigrationInfo& one_migration_info, C_node* p_node = nullptr){
-	// assert(GlobalVMDeployTable.find(vm_id) != GlobalVMDeployTable.end());
-	// assert(GlobalVMDeployTable[vm_id] < My_servers.size());
-	// assert(0 <= in_server_seq < My_servers.size());
-
-	//原服务器删除此虚拟机
-	removeVM(vm_id, GlobalVMDeployTable[vm_id].server_seq);
-	//新服务器增加此虚拟机
-	deployVM(vm_id, in_server_seq, one_migration_info, p_node);
-
-}
-
-
-/*
-//迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
+/*/迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
 void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balance){
 
 	register int32_t remaining_migrate_vm_num = get_max_migrate_num();//当天可用迁移量
-	int32_t max_out = (int32_t)(My_servers.size() * MAX_MIGRATE_OUT_SERVER_RATIO);	//查看的迁出服务器窗口大小
+	int32_t max_out = static_cast<int32_t>(My_servers.size() * MAX_MIGRATE_OUT_SERVER_RATIO);	//查看的迁出服务器窗口大小
 	if(max_out < 1)return;
 
 	if(remaining_migrate_vm_num == 0) return;
@@ -403,7 +380,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 			//i只是当前迁入服务器遍历序号，并不是服务器序列号
 			const C_BoughtServer *in_server = nullptr;
 			size_t size = tmp_my_servers.size();
-			for(int32_t in = (int32_t)(size - 1); in > out; --in){
+			for(int32_t in = static_cast<int32_t>(size - 1); in > out; --in){
 				//把当前虚拟机迁移到当前服务器上
 				uint32_t most_used_server_seq = tmp_my_servers[in]->seq;
 				in_server = &My_servers[most_used_server_seq];
@@ -499,14 +476,14 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 */
 //主流程
 void process() {
-	int32_t t = 0;
-	do{
-	S_DayTotalDecisionInfo day_decision;
+
+	for(int32_t t = 0; t != T; ++t){
+		S_DayTotalDecisionInfo day_decision;
 		#ifndef SUBMIT
 		std::cout<<"process"<<t<<" day"<<endl;
 		#endif
 		
-		const S_DayRequest& day_request = Requests.front();
+		const S_DayRequest& day_request = Requests[t];
 		#ifdef MIGRATE
 		//根据当天的请求是单节点多还是双节点多来判断是要做节点均衡还是不均衡
 		int32_t double_node_add_num = 0;
@@ -528,8 +505,8 @@ void process() {
 		#endif
 		for (uint32_t i = 0; i != day_request.request_num; ++i) {
 
-		//不断处理请求，直至已有服务器无法满足
-		S_DeploymentInfo one_request_deployment_info;
+			//不断处理请求，直至已有服务器无法满足
+			S_DeploymentInfo one_request_deployment_info;
 			const S_Request & one_request = day_request.day_request[i];
 			//删除虚拟机
 			if (!one_request.is_add) {
@@ -548,23 +525,20 @@ void process() {
 			const S_VM& vm = VMList[one_request.vm_type];
 
 			//根据所需cpu and mem,购买服务器
-			buy_server(vm.cpu_num, vm.memory_num, day_decision.server_bought_kind);
+			buy_server(vm.cpu_num, vm.memory_num, day_decision.server_bought_kind, t);
 			
 			best_fit(one_request, one_request_deployment_info);//购买服务器后重新处理当前请求
 			day_decision.request_deployment_info.emplace_back(one_request_deployment_info);
-	}
-		Requests.pop();
+		}
 
 		day_decision.Q = day_decision.server_bought_kind.size();
 		server_seq_to_id(day_decision);
 		write_standard_output(day_decision);
 
-		if(t != T - K){
-		read_one_request();
-		++t;
+		if(t < T - K){
+			read_one_request();
 		}
-		
-	}while(Requests.size());
+	}
 	/*
 	freopen("bought_server_ids.txt", "w", stdout);
 	
