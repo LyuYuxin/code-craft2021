@@ -48,13 +48,13 @@ bool C_BoughtServer::operator<(C_BoughtServer& bought_server) {
 
 float C_BoughtServer::get_double_node_avail_resources()const {
 	int32_t remaining_cpu = A->remaining_cpu_num > B->remaining_cpu_num ? B->remaining_cpu_num : A->remaining_cpu_num;
-	int32_t remaining_mem = A->remaining_memory_num > B->remaining_memory_num ? B->remaining_memory_num : A->remaining_memory_num;
+	int32_t remaining_mem = A->remaining_mem_num > B->remaining_mem_num ? B->remaining_mem_num : A->remaining_mem_num;
 	return  remaining_cpu + remaining_mem;
 }
 
 float C_BoughtServer :: cal_total_resource_used_rate() {
 	float cpu_used_rate = ((float)(server_info.cpu_num - A->remaining_cpu_num - B->remaining_cpu_num)) / server_info.cpu_num;
-	float mem_used_rate = ((float)(server_info.memory_num - A->remaining_memory_num - B->remaining_memory_num)) / server_info.memory_num;
+	float mem_used_rate = ((float)(server_info.mem_num - A->remaining_mem_num - B->remaining_mem_num)) / server_info.mem_num;
 	float total_rate = cpu_used_rate + mem_used_rate;
 	total_resource_used_rate = total_rate;
 	return total_rate;

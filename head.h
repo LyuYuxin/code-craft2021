@@ -11,7 +11,7 @@
 #include<cassert>
 #include<algorithm>
 #include<queue>
-
+#include<set>
 #define _CRT_SECURE_NO_WARNINGS
 
 #define SUBMIT//是否提交
@@ -25,23 +25,33 @@ using namespace std;
 //server信息
 typedef struct  S_Server {
 	int32_t cpu_num;
-	int32_t memory_num;
+	int32_t mem_num;
 	int32_t purchase_cost;
 	int32_t maintenance_cost;
 	string type;
-	S_Server() :cpu_num(0), memory_num(0), purchase_cost(0), maintenance_cost(0) {}
+	S_Server() :cpu_num(0), mem_num(0), purchase_cost(0), maintenance_cost(0) {}
 } S_Server;
 
-//virtual machine信息
+//virtual machine参数
 typedef struct S_VM {
 	int32_t cpu_num;
 	int32_t half_cpu_num;
-	int32_t memory_num;
+	int32_t mem_num;
 	int32_t half_mem_num;
 	bool is_double_node;
 	string type;
-	S_VM() :cpu_num(0), half_cpu_num(0), memory_num(0), half_mem_num(0), is_double_node(false), type("") {}
+	S_VM() :cpu_num(0), half_cpu_num(0), mem_num(0), half_mem_num(0), is_double_node(false), type("") {}
 }S_VM;
+
+//虚拟机实体
+class C_VM_Entity{
+public:
+	C_VM_Entity(){}
+	C_VM_Entity(const S_VM*vm, uint32_t vm_id):vm(vm), vm_id(vm_id){};
+
+	const S_VM * vm;
+	uint32_t vm_id;
+};
 
 //一个请求信息
 typedef struct S_Request {
@@ -69,43 +79,77 @@ typedef struct {
 
 
 
+template<class _Ty>
+struct less_VM
+{
+	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
+	{
+		float l = sqrt(p_Left.vm->cpu_num) + sqrt(p_Left.vm->mem_num);
+		float r = sqrt(p_Right.vm->cpu_num) + sqrt(p_Right.vm->mem_num);
+
+		if (abs(l - r) > 1e-7) {
+			return l < r;
+		}
+		return p_Left.vm_id < p_Right.vm_id;
+
+	}
+};
+
+
 //服务器节点信息
 class C_node {
 public:
 	C_node(const S_Server& s) :remaining_cpu_num(s.cpu_num / 2),
-		remaining_memory_num(s.memory_num / 2),
+		remaining_mem_num(s.mem_num / 2),
+		total_cpu_num(s.cpu_num / 2),
+		total_mem_num(s.mem_num / 2),
 		cpu_used_rate(0), mem_used_rate(0)
 	{}
 	C_node(const S_VM& vm, bool is_half = false) {
 		if (!is_half) {
-			remaining_memory_num = vm.memory_num;
+			remaining_mem_num = vm.mem_num;
 			remaining_cpu_num = vm.cpu_num;
+			total_mem_num = vm.mem_num;
+			total_cpu_num = vm.cpu_num;
 			cpu_used_rate = 0.0f;
 			mem_used_rate = 0.0f;
 		}
 		else {
-			remaining_memory_num = vm.memory_num / 2;
+			remaining_mem_num = vm.mem_num / 2;
 			remaining_cpu_num = vm.cpu_num / 2;
+			total_cpu_num = remaining_cpu_num;
+			total_mem_num = remaining_mem_num;
 			cpu_used_rate = 0.0f;
 			mem_used_rate = 0.0f;
 		}
 	}
-	int32_t remaining_cpu_num;
-	int32_t remaining_memory_num;
-	float cpu_used_rate;
-	float mem_used_rate;
+
 	bool operator<(C_node& node) {
-		return remaining_cpu_num + remaining_memory_num < node.remaining_cpu_num + node.remaining_memory_num;
+		return remaining_cpu_num + remaining_mem_num < node.remaining_cpu_num + node.remaining_mem_num;
 	}
 
 	bool operator=(const C_node& b)const {
-		if ((remaining_cpu_num == b.remaining_cpu_num) && (remaining_memory_num == b.remaining_memory_num)) {
+
+		if ((remaining_cpu_num == b.remaining_cpu_num) && (remaining_mem_num == b.remaining_mem_num)) {
 			return true;
 		}
 		return false;
 	}
-};
 
+	float get_mem_used_rate(){
+		return static_cast<float>(total_mem_num - remaining_mem_num) / total_mem_num;
+	}
+	float get_cpu_used_rate(){
+		return static_cast<float>(total_cpu_num - remaining_cpu_num) / total_cpu_num;
+	}
+	set<C_VM_Entity, less_VM<C_VM_Entity>>single_node_deploy_table;//用于记录此节点上部署的单节点虚拟机信息
+	set<C_VM_Entity, less_VM<C_VM_Entity> >double_node_deploy_table;//用于记录此节点上部署的双节点部署信息
+	int32_t total_cpu_num, total_mem_num;
+	int32_t remaining_cpu_num;
+	int32_t remaining_mem_num;
+	float cpu_used_rate;
+	float mem_used_rate;
+};
 
 class C_BoughtServer {
 public:
@@ -132,7 +176,6 @@ public:
 	static int32_t purchase_seq_num;//静态成员，用于存储当前已购买服务器总数，也用于给新买的服务器赋予序列号
 };
 
-
 template<class _Ty>
 struct less_BoughtServer
 {
@@ -149,13 +192,14 @@ struct less_BoughtServer
 	}
 };
 
+
 template<class _Ty>
 struct less_SingleNode
 {
 	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
 	{
-		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_memory_num);
-		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_memory_num);
+		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_mem_num);
+		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_mem_num);
 
 		if (abs(l - r) > 1e-7) {
 			return l < r;
@@ -164,9 +208,6 @@ struct less_SingleNode
 
 	}
 };
-
-
-
 
 //单个虚拟机部署信息
 typedef struct {
@@ -180,7 +221,6 @@ typedef struct {
 typedef struct DayTotalDecisionInfo {
 	int32_t Q;//扩容购买的服务器种类数
 	map<string, vector<uint32_t>> server_bought_kind;//购买的不同服务器的个数
-
 	int32_t W;//需要迁移的虚拟机的数量
 	vector<S_MigrationInfo> VM_migrate_vm_record;//虚拟机迁移记录
 
@@ -212,7 +252,7 @@ extern unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局VMadd请求表�
 
 
 inline bool com_VM(const pair<uint32_t, const S_VM*>& A, const pair<uint32_t, const S_VM*>& B) {
-	return A.second->cpu_num + A.second->memory_num < B.second->memory_num + B.second->cpu_num;
+	return A.second->cpu_num + A.second->mem_num < B.second->mem_num + B.second->cpu_num;
 }
 
 
@@ -307,7 +347,7 @@ inline void read_standard_input() {
 		vector <string> results = split(line, ',');
 		server.type = results[0];
 		server.cpu_num = stoi(results[1]);
-		server.memory_num = stoi(results[2]);
+		server.mem_num = stoi(results[2]);
 		server.purchase_cost = stoi(results[3]);
 		server.maintenance_cost = stoi(results[4]);
 
@@ -323,8 +363,8 @@ inline void read_standard_input() {
 		vm.type = results[0];
 		vm.cpu_num = stoi(results[1]);
 		vm.half_cpu_num = vm.cpu_num / 2;
-		vm.memory_num = stoi(results[2]);
-		vm.half_mem_num = vm.memory_num / 2;
+		vm.mem_num = stoi(results[2]);
+		vm.half_mem_num = vm.mem_num / 2;
 		vm.is_double_node = stoi(results[3]);
 
 		VMList.emplace(vm.type, vm);
