@@ -16,20 +16,11 @@
 
 #define SUBMIT//是否提交
 //#define MIGRATE//是否迁移
-#define EARLY_STOPPING//是否迁移时短路判断 
+//#define EARLY_STOPPING//是否迁移时短路判断 
 //#define DO_NODE_BALANCE
 
 
 using namespace std;
-
-enum E_Deploy_status {
-	dep_No = -1, dep_A, dep_B, dep_Both
-};
-//接下来是输入
-//*****************************************************************************************************
-//*****************************************************************************************************
-//*****************************************************************************************************
-//*****************************************************************************************************
 
 //server信息
 typedef struct  S_Server {
@@ -67,8 +58,6 @@ typedef struct {
 	vector<int> delete_op_idxs;//用于记录删除操作的索引
 }S_DayRequest;
 
-//操作及输出
-//********************************************************************************************************
 
 //单个虚拟机迁移信息
 typedef struct {
@@ -130,8 +119,8 @@ public:
 
 	bool operator<(C_BoughtServer& bought_server);
 
-	//返回A、B节点中可用cpu和内存较小值之和
-	int32_t get_double_node_avail_resources()const;
+	//返回A、B节点中可用cpu和内存较小值
+	float get_double_node_avail_resources()const;
 
 	//计算总cpu内存资源利用率
 	float cal_total_resource_used_rate();
@@ -149,31 +138,33 @@ struct less_BoughtServer
 {
 	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
 	{
-		int32_t l_resources = p_Left->get_double_node_avail_resources();
-		int32_t r_resources = p_Right->get_double_node_avail_resources();
+		float l_resources = p_Left->get_double_node_avail_resources();
+		float r_resources = p_Right->get_double_node_avail_resources();
 
 		//二级比较，如果值相等，就进一步比较地址值，保证不出现重复key
-		if (l_resources != r_resources) {
+		if (abs(l_resources - r_resources) > 1e-7) {
 			return l_resources < r_resources;
 		}
 		return p_Left < p_Right;
 	}
 };
 
-
 template<class _Ty>
 struct less_SingleNode
 {
 	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
 	{
-		//同上仿函数
-		if (p_Left->remaining_cpu_num + p_Left->remaining_memory_num != p_Right->remaining_cpu_num + p_Right->remaining_memory_num) {
-			return p_Left->remaining_cpu_num + p_Left->remaining_memory_num < p_Right->remaining_cpu_num + p_Right->remaining_memory_num;
+		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_memory_num);
+		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_memory_num);
+
+		if (abs(l - r) > 1e-7) {
+			return l < r;
 		}
 		return p_Left < p_Right;
 
 	}
 };
+
 
 
 

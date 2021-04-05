@@ -10,6 +10,7 @@ extern unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信
 extern vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 
 
+
 extern vector<C_BoughtServer*> My_servers;//已购买的服务器列表
 extern map<C_BoughtServer*, uint32_t, less_BoughtServer<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
 extern map<C_node*, uint32_t, less_SingleNode<C_node*> > SingleNodeTable;//将所有服务器的节点组织成一个单节点表， 值为服务器seq
@@ -45,10 +46,10 @@ bool C_BoughtServer::operator<(C_BoughtServer& bought_server) {
 	return this->get_double_node_avail_resources() < bought_server.get_double_node_avail_resources();
 }
 
-int32_t C_BoughtServer::get_double_node_avail_resources()const {
+float C_BoughtServer::get_double_node_avail_resources()const {
 	int32_t remaining_cpu = A->remaining_cpu_num > B->remaining_cpu_num ? B->remaining_cpu_num : A->remaining_cpu_num;
 	int32_t remaining_mem = A->remaining_memory_num > B->remaining_memory_num ? B->remaining_memory_num : A->remaining_memory_num;
-	return remaining_cpu + remaining_mem;
+	return  remaining_cpu + remaining_mem;
 }
 
 float C_BoughtServer :: cal_total_resource_used_rate() {

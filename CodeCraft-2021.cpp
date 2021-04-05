@@ -6,7 +6,7 @@
 const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.5f;
 
 //购买服务器参数
-const float TOTAL_COST_RATIO =12.0f; 
+const float TOTAL_COST_RATIO =15.0f; 
 
 
 
