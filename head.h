@@ -12,6 +12,7 @@
 #include<algorithm>
 #include<queue>
 #include<set>
+#include<random>
 #define _CRT_SECURE_NO_WARNINGS
 
 #define SUBMIT//是否提交
@@ -76,8 +77,6 @@ typedef struct {
 	bool is_double_node;//是否双节点部署
 	string node_name;//如果单节点部署，部署的节点名称
 }S_MigrationInfo;
-
-
 
 template<class _Ty>
 struct less_VM
