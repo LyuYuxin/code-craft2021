@@ -142,6 +142,11 @@ public:
 	float get_cpu_used_rate(){
 		return static_cast<float>(total_cpu_num - remaining_cpu_num) / total_cpu_num;
 	}
+
+	float get_total_used_rate(){
+		return static_cast<float>(total_cpu_num + total_mem_num - remaining_mem_num - remaining_cpu_num) / (total_mem_num + total_cpu_num);
+	}
+
 	set<C_VM_Entity, less_VM<C_VM_Entity>>single_node_deploy_table;//用于记录此节点上部署的单节点虚拟机信息
 	set<C_VM_Entity, less_VM<C_VM_Entity> >double_node_deploy_table;//用于记录此节点上部署的双节点部署信息
 	int32_t total_cpu_num, total_mem_num;
@@ -198,8 +203,8 @@ struct less_SingleNode
 {
 	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
 	{
-		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_mem_num);
-		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_mem_num);
+		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_mem_num) + 0.001 * (1 / (1 + p_Left->get_total_used_rate()));
+		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_mem_num)  + 0.001 * (1 / (1 + p_Right->get_total_used_rate()));
 
 		if (abs(l - r) > 1e-7) {
 			return l < r;
@@ -208,6 +213,22 @@ struct less_SingleNode
 
 	}
 };
+
+// template<class _Ty>
+// struct less_SingleNode
+// {
+// 	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
+// 	{
+// 		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_mem_num);
+// 		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_mem_num);
+
+// 		if (abs(l - r) > 1e-7) {
+// 			return l < r;
+// 		}
+// 		return p_Left < p_Right;
+
+// 	}
+// };
 
 //单个虚拟机部署信息
 typedef struct {
