@@ -25,7 +25,7 @@ unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
 vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 vector<C_BoughtServer*> My_servers;//已购买的服务器列表
 
-map<C_BoughtServer*, uint32_t, less_BoughtServer<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，键为指向已购买服务器的指针，值为服务器seq
+map<C_BoughtServer*, uint32_t, less_DoubleNode<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，键为指向已购买服务器的指针，值为服务器seq
 map<C_node*, uint32_t, less_SingleNode<C_node*> > SingleNodeTable;//将所有服务器的节点组织成一个单节点表，键为指向已购买服务器节点的指针，值为服务器seq
 
 unordered_map<uint32_t, S_DeploymentInfo> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和相应的部署信息
@@ -479,28 +479,60 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 					break;
 				}	
 			}
+			SingleNodeTable.erase(fake_it);
+			delete fake_node;
 			//如果当前无节点可以容纳此虚拟机
 			if(right_it == SingleNodeTable.end()){
-				SingleNodeTable.erase(fake_it);
-				delete fake_node;
 				vm_it++;
 				continue;
 			}
 			else{
+				
+				//新节点部署此虚拟机				
+				uint32_t in_server_seq = right_it->second;
+				S_MigrationInfo one_migration_info;
+
+				C_node* in_node = right_it->first;
+				C_node* the_other_node = My_servers[right_it->second]->A;
+				if(the_other_node == in_node){
+				the_other_node = My_servers[right_it->second]->B;
+				}
+				if(the_other_node->remaining_cpu_num >= vm.cpu_num && the_other_node->remaining_mem_num >= vm.mem_num){
+					int32_t r1_cpu = in_node->remaining_cpu_num;
+					int32_t r1_mem = in_node->remaining_mem_num;
+					int32_t r2_cpu = the_other_node->remaining_cpu_num;
+					int32_t r2_mem = the_other_node->remaining_mem_num;
+					int32_t to_r1_val = pow(r1_cpu - vm.cpu_num - r2_cpu, 2) + pow(r1_mem - vm.mem_num - r2_mem, 2);
+					int32_t to_r2_val = pow(r2_cpu - vm.cpu_num - r1_cpu, 2) + pow(r2_mem - vm.mem_num - r1_mem, 2);
+					if(to_r2_val < to_r1_val){
+						if(the_other_node == node_out->first){
+							vm_it++;
+							continue;
+						}
+
+						//从当前节点中删除此虚拟机
+						set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = vm_it++;
+						//删除前记录此虚拟机的id，用于部署
+						uint32_t out_vm_id = tmp_it->vm_id;
+						removeVM((tmp_it)->vm_id, node_out->second);
+						
+						deployVM(out_vm_id, in_server_seq, one_migration_info, the_other_node);
+						day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
+						
+						//迁移数目－1
+						--remaining_migrate_vm_num;
+
+						if(remaining_migrate_vm_num == 0)return;
+						continue;
+					}
+				}
+
 				//从当前节点中删除此虚拟机
 				set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = vm_it++;
 				//删除前记录此虚拟机的id，用于部署
 				uint32_t out_vm_id = tmp_it->vm_id;
 				removeVM((tmp_it)->vm_id, node_out->second);
 
-
-				//新节点部署此虚拟机				
-				uint32_t in_server_seq = right_it->second;
-				C_node* in_node = right_it->first;
-				SingleNodeTable.erase(fake_it);
-				delete fake_node; 
-
-				S_MigrationInfo one_migration_info;
 				deployVM(out_vm_id, in_server_seq, one_migration_info, in_node);
 				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
 

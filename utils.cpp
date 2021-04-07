@@ -12,7 +12,7 @@ extern vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 
 
 extern vector<C_BoughtServer*> My_servers;//已购买的服务器列表
-extern map<C_BoughtServer*, uint32_t, less_BoughtServer<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
+extern map<C_BoughtServer*, uint32_t, less_DoubleNode<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
 extern map<C_node*, uint32_t, less_SingleNode<C_node*> > SingleNodeTable;//将所有服务器的节点组织成一个单节点表， 值为服务器seq
 extern unordered_map<uint32_t, S_DeploymentInfo> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和相应的部署信息
 extern unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
@@ -43,7 +43,7 @@ float C_BoughtServer::cal_node_similarity(int m1, int c1, int m2, int c2) {
 }
 
 bool C_BoughtServer::operator<(C_BoughtServer& bought_server) {
-	return this->get_double_node_avail_resources() < bought_server.get_double_node_avail_resources();
+	return this->cal_total_resource_used_rate() < bought_server.cal_total_resource_used_rate();
 }
 
 float C_BoughtServer::get_double_node_avail_resources()const {

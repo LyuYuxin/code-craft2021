@@ -175,13 +175,15 @@ public:
 
 	S_Server server_info;//此服务器的基本参数
 	C_node* A, * B;//两个节点的信息
+
+	set<C_VM_Entity, less_VM<C_VM_Entity> >single_node_deploy_table;
 	uint32_t seq;//此服务器序列号，唯一标识
 	float total_resource_used_rate;//cpu和mem总使用率.针对服务器
 	static int32_t purchase_seq_num;//静态成员，用于存储当前已购买服务器总数，也用于给新买的服务器赋予序列号
 };
 
 template<class _Ty>
-struct less_BoughtServer
+struct less_DoubleNode
 {
 	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
 	{
@@ -196,6 +198,21 @@ struct less_BoughtServer
 	}
 };
 
+template<class _Ty>
+struct less_BoughtServer
+{
+	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
+	{
+		float l_resources = p_Left->cal_total_resource_used_rate();
+		float r_resources = p_Right->cal_total_resource_used_rate();
+
+		//二级比较，如果值相等，就进一步比较地址值，保证不出现重复key
+		if (abs(l_resources - r_resources) > 1e-7) {
+			return l_resources > r_resources;
+		}
+		return p_Left < p_Right;
+	}
+};
 
 template<class _Ty>
 struct less_SingleNode
@@ -265,7 +282,7 @@ extern vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 
 
 extern vector<C_BoughtServer*> My_servers;//已购买的服务器列表
-extern map<C_BoughtServer*, uint32_t, less_BoughtServer<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
+extern map<C_BoughtServer*, uint32_t, less_DoubleNode<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
 extern map<C_node*, uint32_t, less_SingleNode<C_node*> > SingleNodeTable;//将所有服务器的节点组织成一个单节点表， 值为服务器seq
 extern unordered_map<uint32_t, S_DeploymentInfo> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和相应的部署信息
 extern unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
