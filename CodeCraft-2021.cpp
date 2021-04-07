@@ -402,59 +402,8 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 
 		//拿到当前节点的指针
 		C_node *cur_node = node_out->first;
-		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator vm_end = cur_node->single_node_deploy_table.end();
-		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator vm_it = cur_node->single_node_deploy_table.begin(); //指向当前虚拟机
 
-		for(; vm_it != vm_end;){
-			const S_VM & vm = *vm_it->vm;
-			C_node * fake_node = new C_node(vm);
-			//将这个假节点插入到单节点表中，然后以其位置为基准，向右(剩余节点容量升序)寻找最接近的节点
-			SingleNodeTable.emplace(fake_node, 0);
-			map<C_node*, uint32_t>::iterator fake_it = SingleNodeTable.find(fake_node);
-			map<C_node*, uint32_t>::iterator right_it = fake_it;
-
-			while(++right_it != SingleNodeTable.end()){
-				if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_mem_num >= vm.mem_num){
-					if(right_it == SingleNodeTable.find(node_out->first)){
-						continue;
-					}
-					break;
-				}	
-			}
-			//如果当前无节点可以容纳此虚拟机
-			if(right_it == SingleNodeTable.end()){
-				SingleNodeTable.erase(fake_it);
-				delete fake_node;
-				vm_it++;
-				continue;
-			}
-			else{
-				//从当前节点中删除此虚拟机
-				set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = vm_it++;
-				//删除前记录此虚拟机的id，用于部署
-				uint32_t out_vm_id = tmp_it->vm_id;
-				removeVM((tmp_it)->vm_id, node_out->second);
-
-
-				//新节点部署此虚拟机				
-				uint32_t in_server_seq = right_it->second;
-				C_node* in_node = right_it->first;
-				SingleNodeTable.erase(fake_it);
-				delete fake_node; 
-
-				S_MigrationInfo one_migration_info;
-				deployVM(out_vm_id, in_server_seq, one_migration_info, in_node);
-				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-
-				//迁移数目－1
-				--remaining_migrate_vm_num;
-
-				if(remaining_migrate_vm_num == 0)return;
-				continue;
-			}
-			++vm_it;
-		}
-
+		
 		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator double_vm_end = cur_node->double_node_deploy_table.end();
 		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator double_vm_it = cur_node->double_node_deploy_table.begin(); //指向当前虚拟机
 		
@@ -507,6 +456,61 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 				continue;
 			}
 			++double_vm_it;
+		}
+
+
+
+		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator vm_end = cur_node->single_node_deploy_table.end();
+		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator vm_it = cur_node->single_node_deploy_table.begin(); //指向当前虚拟机
+
+		for(; vm_it != vm_end;){
+			const S_VM & vm = *vm_it->vm;
+			C_node * fake_node = new C_node(vm);
+			//将这个假节点插入到单节点表中，然后以其位置为基准，向右(剩余节点容量升序)寻找最接近的节点
+			SingleNodeTable.emplace(fake_node, 0);
+			map<C_node*, uint32_t>::iterator fake_it = SingleNodeTable.find(fake_node);
+			map<C_node*, uint32_t>::iterator right_it = fake_it;
+
+			while(++right_it != SingleNodeTable.end()){
+				if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_mem_num >= vm.mem_num){
+					if(right_it == SingleNodeTable.find(node_out->first)){
+						continue;
+					}
+					break;
+				}	
+			}
+			//如果当前无节点可以容纳此虚拟机
+			if(right_it == SingleNodeTable.end()){
+				SingleNodeTable.erase(fake_it);
+				delete fake_node;
+				vm_it++;
+				continue;
+			}
+			else{
+				//从当前节点中删除此虚拟机
+				set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = vm_it++;
+				//删除前记录此虚拟机的id，用于部署
+				uint32_t out_vm_id = tmp_it->vm_id;
+				removeVM((tmp_it)->vm_id, node_out->second);
+
+
+				//新节点部署此虚拟机				
+				uint32_t in_server_seq = right_it->second;
+				C_node* in_node = right_it->first;
+				SingleNodeTable.erase(fake_it);
+				delete fake_node; 
+
+				S_MigrationInfo one_migration_info;
+				deployVM(out_vm_id, in_server_seq, one_migration_info, in_node);
+				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
+
+				//迁移数目－1
+				--remaining_migrate_vm_num;
+
+				if(remaining_migrate_vm_num == 0)return;
+				continue;
+			}
+			++vm_it;
 		}
 
 
