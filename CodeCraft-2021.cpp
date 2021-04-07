@@ -493,18 +493,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 
 
 	}
- 	#ifdef DO_NODE_BALANCE
- 	//对所有服务器做节点均衡
- 	assert(remaining_migrate_vm_num > 0);
- 	size_t server_size = My_servers.size();
- 	S_MigrationInfo migration_info;
- 	for(size_t i = 0; i != server_size; ++i){
- 		if(My_servers[i].make_node_balance(migration_info, do_balance)){
- 			day_decision.VM_migrate_vm_record.emplace_back(migration_info);
- 			if(--remaining_migrate_vm_num == 0)return;
- 		}
- 	}
- 	#endif
+
  }
 
 
@@ -578,7 +567,6 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 
 //主流程
 void process() {
-	
 	for(int32_t t = 0; t != T; ++t){
 		S_DayTotalDecisionInfo day_decision;
 
@@ -602,7 +590,9 @@ void process() {
 		full_loaded_migrate_vm(day_decision, do_balance);
 		day_decision.W = day_decision.VM_migrate_vm_record.size();
 		#endif
-		for (uint32_t i = 0; i != day_request.request_num; ++i) {
+
+		if(day_request.delete_op_idxs.size() < 2){
+			for (uint32_t i = 0; i != day_request.request_num; ++i) {
 			
 			//不断处理请求，直至已有服务器无法满足
 			S_DeploymentInfo one_request_deployment_info;
@@ -631,6 +621,65 @@ void process() {
 			day_decision.request_deployment_info.emplace_back(one_request_deployment_info);
 		}
 
+		}
+		else{
+			int32_t left = 0;
+			int32_t right = day_request.delete_op_idxs[0];
+
+			for(uint32_t batch_num = 0;; ){
+				map<const S_Request*, uint32_t, less_Request<const S_Request*> >tmp_request_list;
+				for(int i = left; i != right; ++i){
+					tmp_request_list.emplace(&day_request.day_request[i], i);
+				}
+				map<const S_Request*, uint32_t>::iterator it = tmp_request_list.begin();
+				map<const S_Request*, uint32_t>::iterator end = tmp_request_list.end();
+				
+				map<uint32_t, S_DeploymentInfo> batch_deployment_info;//按序记录当前batch的部署信息
+				for(;it != end; ++it){
+					//不断处理请求，直至已有服务器无法满足
+					S_DeploymentInfo one_request_deployment_info;
+					const S_Request & one_request = *(it->first);
+					//std::cout<<"batch_num:"<<batch_num<<"  vm_type:"<<one_request.vm_type<< "is double node:"<<VMList[one_request.vm_type].is_double_node << " vm_cpu:"<< VMList[one_request.vm_type].cpu_num<< " vm_mem:"<<VMList[one_request.vm_type].mem_num<<"  vm_id:"<<one_request.vm_id<<endl;
+					//如果是增加虚拟机
+					if (best_fit(one_request, one_request_deployment_info)) {
+						batch_deployment_info.emplace(it->second, one_request_deployment_info);
+						continue;
+					};
+
+					const S_VM& vm = VMList[one_request.vm_type];
+
+					//根据所需cpu and mem,购买服务器
+					buy_server(vm.cpu_num, vm.mem_num, day_decision.server_bought_kind, t);
+					
+					best_fit(one_request, one_request_deployment_info);//购买服务器后重新处理当前请求
+					batch_deployment_info.emplace(it->second, one_request_deployment_info);
+				}
+				
+				if(batch_num != day_request.delete_op_idxs.size() - 1){
+					//处理一个删除请求
+					const S_Request & one_request = day_request.day_request.at(day_request.delete_op_idxs[batch_num]);
+					
+					assert(!one_request.is_add);
+					assert(GlobalVMDeployTable.find(one_request.vm_id) != GlobalVMDeployTable.end());
+					int32_t cur_server_seq = GlobalVMDeployTable[one_request.vm_id].server_seq;
+					removeVM(one_request.vm_id, cur_server_seq);
+				}
+					
+				//将当前批次的部署信息按顺序添加到部署记录中
+				map<uint32_t, S_DeploymentInfo>::iterator batch_deploy_it = batch_deployment_info.begin();
+				map<uint32_t, S_DeploymentInfo>::iterator batch_deploy_end = batch_deployment_info.end(); 
+				for(; batch_deploy_it != batch_deploy_end; ++batch_deploy_it){
+					day_decision.request_deployment_info.emplace_back(batch_deploy_it->second);
+				}
+				if(right == day_request.delete_op_idxs.back()){
+					break;
+				}
+
+				++batch_num;
+				left = right + 1;
+				right = day_request.delete_op_idxs[batch_num];
+			}
+		}
 		day_decision.Q = day_decision.server_bought_kind.size();
 		server_seq_to_id(day_decision);
 		
@@ -639,7 +688,7 @@ void process() {
 		#endif
 
 		#ifndef SUBMIT
-		cout<<"第"<<t<<"天，共有"<<My_servers.size()<<"台服务器"<<endl;
+		std::cout<<"第"<<t<<"天，共有"<<My_servers.size()<<"台服务器"<<endl;
 		#endif
 		
 		if(t < T - K){

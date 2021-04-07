@@ -213,6 +213,8 @@ struct less_SingleNode
 	}
 };
 
+
+
 // template<class _Ty>
 // struct less_SingleNode
 // {
@@ -269,6 +271,32 @@ extern unordered_map<uint32_t, S_DeploymentInfo> GlobalVMDeployTable;//全局虚
 extern unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
 extern unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局VMadd请求表，用于从虚拟机id映射到虚拟机信息
 
+
+
+template<class _Ty>
+struct less_Request
+{
+	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
+	{
+		const S_VM & l = VMList[p_Left->vm_type];
+		const S_VM & r = VMList[p_Right->vm_type];
+
+		if((l.is_double_node) && (!r.is_double_node)){
+			return true;
+		}
+		else if((!l.is_double_node) && (r.is_double_node)){
+			return false;
+		}
+		else{
+			float l_val = pow(l.cpu_num, 2) + pow(l.mem_num, 2);
+			float r_val = pow(r.cpu_num, 2) + pow(r.mem_num, 2);
+			if(abs(l_val - r_val) > 1e-7){
+				return l_val < r_val;
+			}
+			return p_Left <p_Right;
+		}
+	}
+};
 
 
 inline bool com_VM(const pair<uint32_t, const S_VM*>& A, const pair<uint32_t, const S_VM*>& B) {
@@ -419,7 +447,7 @@ inline void read_standard_input() {
 
 			day_request.day_request.emplace_back(one_request);
 		}
-
+		day_request.delete_op_idxs.emplace_back(day_request_num);
 		Requests.emplace_back(day_request);
 	}
 }
@@ -487,6 +515,7 @@ inline void read_one_request() {
 
 		day_request.day_request.emplace_back(one_request);
 	}
+	day_request.delete_op_idxs.emplace_back(day_request_num);
 
 	Requests.emplace_back(day_request);
 }
