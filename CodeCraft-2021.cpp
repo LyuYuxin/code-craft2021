@@ -328,9 +328,9 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 				int32_t r1_mem = node->remaining_mem_num;
 				int32_t r2_cpu = the_other_node->remaining_cpu_num;
 				int32_t r2_mem = the_other_node->remaining_mem_num;
-				int32_t to_r1_val = min(r1_cpu - vm.cpu_num, r2_cpu) + min(r1_mem - vm.mem_num, r2_mem);
-				int32_t to_r2_val = min(r2_cpu - vm.cpu_num, r1_cpu) + min(r2_mem - vm.mem_num, r1_mem);
-				if(to_r2_val > to_r1_val){
+				int32_t to_r1_val = pow(r1_cpu - vm.cpu_num - r2_cpu, 2) + pow(r1_mem - vm.mem_num - r2_mem, 2);
+				int32_t to_r2_val = pow(r2_cpu - vm.cpu_num - r1_cpu, 2) + pow(r2_mem - vm.mem_num - r1_mem, 2);
+				if(to_r2_val < to_r1_val){
 					SingleNodeTable.erase(fake_it);
 					delete fake_node;
 
