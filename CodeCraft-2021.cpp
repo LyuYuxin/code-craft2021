@@ -11,6 +11,8 @@ const float TOTAL_COST_RATIO =0.00055f;
 //判断虚拟机是否平衡
 const float BALANCE_THRESHOLD = 0.3f;
 
+const int SMALL_CPU_THRESHOLD = 10;
+const int SMALL_MEM_THRESHOLD = 10;
 //全局变量定义
 //*****************************************************************************************************
 //*****************************************************************************************************
@@ -26,13 +28,13 @@ unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
 vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 vector<C_BoughtServer*> My_servers;//已购买的服务器列表
 
-map<C_BoughtServer*, uint32_t, less_DoubleNode<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，键为指向已购买服务器的指针，值为服务器seq
-map<C_node*, uint32_t, less_SingleNode<C_node*> > SingleNodeTable;//将所有服务器的节点组织成一个单节点表，键为指向已购买服务器节点的指针，值为服务器seq
+map<C_BoughtServer*, uint32_t, less_DoubleNode> DoubleNodeTable;//将所有服务器组织成一个双节点表，键为指向已购买服务器的指针，值为服务器seq
+map<C_node*, uint32_t, less_SingleNode> SingleNodeTable;//将所有服务器的节点组织成一个单节点表，键为指向已购买服务器节点的指针，值为服务器seq
 
 unordered_map<uint32_t, S_DeploymentInfo> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和相应的部署信息
 unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
 unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局VMadd请求表，用于从虚拟机id映射到虚拟机信息
-
+set<uint32_t> small_VMS;//小虚拟机
 
 
 //部署虚拟机用
@@ -97,12 +99,22 @@ void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_i
 		assert(s->A->remaining_mem_num >= 0);
 		assert(s->B->remaining_cpu_num >= 0);
 		assert(s->B->remaining_mem_num >= 0);
+		
+		assert(s->A->remaining_cpu_num <= s->A->total_cpu_num);
+		assert(s->A->remaining_mem_num <= s->A->total_mem_num);
+		assert(s->B->remaining_cpu_num <= s->B->total_cpu_num);
+		assert(s->B->remaining_mem_num <= s->B->total_mem_num);
+		
 		one_deployment_info.server = s;
 		one_deployment_info.vm_info = &vm;
 		one_deployment_info.server_seq = server_seq;
 		//更新全局虚拟机部署表
 		GlobalVMDeployTable.emplace(vm_id, one_deployment_info);
 		
+		//更新小虚拟机表
+		if(!vm.is_double_node and vm.cpu_num < SMALL_CPU_THRESHOLD and vm.mem_num < SMALL_MEM_THRESHOLD){
+			small_VMS.emplace(vm_id);
+		}
 	}
 
 //迁移虚拟机用部署函数
@@ -172,6 +184,11 @@ void deployVM(int vm_id, uint32_t server_seq, S_MigrationInfo& one_migration_inf
 		assert(s->B->remaining_cpu_num >= 0);
 		assert(s->B->remaining_mem_num >= 0);
 
+		assert(s->A->remaining_cpu_num <= s->A->total_cpu_num);
+		assert(s->A->remaining_mem_num <= s->A->total_mem_num);
+		assert(s->B->remaining_cpu_num <= s->B->total_cpu_num);
+		assert(s->B->remaining_mem_num <= s->B->total_mem_num);
+
 		one_deployment_info.server = s;
 		one_deployment_info.vm_info = &vm;
 		one_deployment_info.server_seq = server_seq;
@@ -235,7 +252,7 @@ void removeVM(uint32_t vm_id, uint32_t server_seq) {
 		assert(s->B->remaining_mem_num <= s->server_info.mem_num / 2);
 
 		
-
+		small_VMS.erase(vm_id);
 		GlobalVMDeployTable.erase(vm_id);
 	}
 
@@ -413,7 +430,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 	if(max_out < 2)return;
 
 
-	map<C_node*, uint32_t, less_SingleNode<C_node*> > tmp_SingleNodeTable(SingleNodeTable);
+	map<C_node*, uint32_t, less_SingleNode > tmp_SingleNodeTable(SingleNodeTable);
 
 	//开始遍历当前迁出服务器所有已有的虚拟机
 	map<C_node*, uint32_t>::iterator node_out = tmp_SingleNodeTable.end();
@@ -438,19 +455,20 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 			DoubleNodeTable.emplace(fake_server, 0);
 			map<C_BoughtServer*, uint32_t>::iterator fake_it = DoubleNodeTable.find(fake_server);
 			map<C_BoughtServer*, uint32_t>::iterator right_it = fake_it;
-
+			bool is_self = false;
 			while(++right_it != DoubleNodeTable.end()){
 			if(right_it->first->A->remaining_cpu_num >= vm.half_cpu_num &&
 			right_it->first->B->remaining_cpu_num >= vm.half_cpu_num&&
 			right_it->first->A->remaining_mem_num >= vm.half_mem_num&&
 			right_it->first->B->remaining_mem_num >= vm.half_mem_num){
 				if(right_it == DoubleNodeTable.find(My_servers[node_out->second])){
-					continue;
+					is_self = true;
+					break;
 					}
 				break;
 			}
 		}
-		if(right_it == DoubleNodeTable.end()){
+		if(right_it == DoubleNodeTable.end() or is_self){
 			DoubleNodeTable.erase(fake_it);
 			delete fake_server;
 			++double_vm_it;
@@ -494,11 +512,12 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 			SingleNodeTable.emplace(fake_node, 0);
 			map<C_node*, uint32_t>::iterator fake_it = SingleNodeTable.find(fake_node);
 			map<C_node*, uint32_t>::iterator right_it = fake_it;
-
+			bool is_self = false;
 			while(++right_it != SingleNodeTable.end()){
 				if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_mem_num >= vm.mem_num){
 					if(right_it == SingleNodeTable.find(node_out->first)){
-						continue;
+						is_self = true;
+						break;
 					}
 					break;
 				}	
@@ -506,7 +525,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 			SingleNodeTable.erase(fake_it);
 			delete fake_node;
 			//如果当前无节点可以容纳此虚拟机
-			if(right_it == SingleNodeTable.end()){
+			if(right_it == SingleNodeTable.end() or is_self){
 				vm_it++;
 				continue;
 			}
@@ -570,248 +589,46 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 		}
 
 
+
 	}
 
- }
-
-
-/*
-void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balance){
-	int migrate_num = 0;
-	int32_t remaining_migrate_vm_num=get_max_migrate_num();
-	int32_t max_rand_migrate_num = remaining_migrate_vm_num * 0.1;
-	int32_t singleNodeLength=SingleNodeTable.size();
-	srand((unsigned)time(nullptr));
-
-	if(remaining_migrate_vm_num<1) return;
-
-	int32_t count=0;
-
-	bool flag=false;
-
-	while(max_rand_migrate_num)
-	{
-		// count++;
-		// if(count>singleNodeLength/100) break;
- 		int32_t randomNum_from=rand()%singleNodeLength;
-		int32_t randomNum_to=rand()%singleNodeLength;
-		while(randomNum_from==randomNum_to)
-		{
-			randomNum_from=rand()%singleNodeLength;
-			randomNum_to=rand()%singleNodeLength;
-		}
-
-		map<C_node*,uint32_t>::iterator migrateFrom_it;
-		map<C_node*,uint32_t>::iterator migrateTo_it;
-		migrateFrom_it=SingleNodeTable.begin();
-		advance(migrateFrom_it,randomNum_from);
-		migrateTo_it=SingleNodeTable.begin();
-		advance(migrateTo_it,randomNum_to);
-
-		set<C_VM_Entity>::iterator set_it;
-		for(set_it=migrateFrom_it->first->single_node_deploy_table.begin();set_it!=migrateFrom_it->first->single_node_deploy_table.end();++set_it)
-		{
-			int32_t needCpuNum=(*set_it).vm->cpu_num;
-			int32_t needMemNum=(*set_it).vm->mem_num;
-
-			if(migrateTo_it->first->remaining_cpu_num<needCpuNum||migrateTo_it->first->remaining_mem_num<needMemNum) continue;
-
-			float before=0.0f;
-			before=exp(migrateFrom_it->first->remaining_cpu_num+migrateFrom_it->first->remaining_mem_num)+exp(migrateTo_it->first->remaining_cpu_num+migrateTo_it->first->remaining_mem_num);
-			float after=0.0f;
-			after=exp(migrateFrom_it->first->remaining_cpu_num+needCpuNum+migrateFrom_it->first->remaining_mem_num+needMemNum)+exp(migrateTo_it->first->remaining_cpu_num-needCpuNum+migrateTo_it->first->remaining_mem_num-needMemNum);
-
+	set<uint32_t> tmp_small_VMS(small_VMS);
+	for(map<C_BoughtServer*, uint32_t>::iterator i = DoubleNodeTable.begin(); i != DoubleNodeTable.end(); ++i){
 			
-			if(before>=after) continue;
-			else{
-				//迁移操作
-				S_MigrationInfo one_migration_info;
-				migrate_vm(set_it->vm_id, migrateTo_it->second,one_migration_info,migrateTo_it->first);
-				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-				max_rand_migrate_num--;
-				migrate_num++;
-				break;
+			C_BoughtServer* cur_server = i->first;
 
-
+			for(set<uint32_t>::iterator j = tmp_small_VMS.begin(); j != tmp_small_VMS.end();){
+				
+				const S_VM * vm = GlobalVMDeployTable[*j].vm_info;
+				
+				if(cur_server->A->remaining_cpu_num >= vm->cpu_num &&
+				cur_server->A->remaining_mem_num >= vm->mem_num){
+					S_MigrationInfo one_migration_info;
+					set<uint32_t>::iterator tmp_it = j++;
+					migrate_vm(*tmp_it,  (i++)->second, one_migration_info, cur_server->A);
+					--i;
+					day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
+					tmp_small_VMS.erase(tmp_it);
+					if(--remaining_migrate_vm_num == 0)return ;
+					continue;
+				}
+				else if(cur_server->B->remaining_cpu_num >= vm->cpu_num &&
+				cur_server->B->remaining_mem_num >= vm->mem_num){
+					S_MigrationInfo one_migration_info;
+					set<uint32_t>::iterator tmp_it = j++;
+					migrate_vm(*tmp_it,  (i++)->second, one_migration_info, cur_server->B);
+					--i;
+					tmp_small_VMS.erase(tmp_it);
+					day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
+					if(--remaining_migrate_vm_num == 0)return ;
+					continue;
+				}
+				++j;
 			}
-			
-			if(abs(after-before)/before<=0.1) flag=true;
-			
 		}
-		if(flag) break;
-	}
-	cout<<"迁移了"<<migrate_num<<"次"<<endl;
-
 	
-	remaining_migrate_vm_num -= max_rand_migrate_num;
-	//int32_t remaining_migrate_vm_num = get_max_migrate_num();//当天可用迁移量
-	if(remaining_migrate_vm_num == 0) return;
-
-	//根据单节点表对所有节点上的单节点部署虚拟机进行迁移
-	int32_t max_out = 2 * static_cast<int32_t>(My_servers.size() * MAX_MIGRATE_OUT_SERVER_RATIO);	//查看的单节点个数
-	if(max_out < 2)return;
-
-	map<C_node*, uint32_t, less_SingleNode<C_node*> > tmp_SingleNodeTable(SingleNodeTable);
-
-	//开始遍历当前迁出服务器所有已有的虚拟机
-	map<C_node*, uint32_t>::iterator node_out = tmp_SingleNodeTable.end();
-	--node_out;
-
-	for(int32_t out = 0;out != max_out; ++out,--node_out){
-
-
-		//把所有该节点的单节点虚拟机拿出来重新部署
-
-		//拿到当前节点的指针
-		C_node *cur_node = node_out->first;
-
-		
-		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator double_vm_end = cur_node->double_node_deploy_table.end();
-		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator double_vm_it = cur_node->double_node_deploy_table.begin(); //指向当前虚拟机
-		
-		for(; double_vm_it != double_vm_end;){
-			const S_VM & vm = *(double_vm_it->vm);
-			C_BoughtServer * fake_server = new C_BoughtServer(vm);
-			//将这个假节点插入到单节点表中，然后以其位置为基准，向右(剩余节点容量升序)寻找最接近的节点
-			DoubleNodeTable.emplace(fake_server, 0);
-			map<C_BoughtServer*, uint32_t>::iterator fake_it = DoubleNodeTable.find(fake_server);
-			map<C_BoughtServer*, uint32_t>::iterator right_it = fake_it;
-
-			while(++right_it != DoubleNodeTable.end()){
-			if(right_it->first->A->remaining_cpu_num >= vm.half_cpu_num &&
-			right_it->first->B->remaining_cpu_num >= vm.half_cpu_num&&
-			right_it->first->A->remaining_mem_num >= vm.half_mem_num&&
-			right_it->first->B->remaining_mem_num >= vm.half_mem_num){
-				if(right_it == DoubleNodeTable.find(My_servers[node_out->second])){
-					continue;
-					}
-				break;
-			}
-		}
-		if(right_it == DoubleNodeTable.end()){
-			DoubleNodeTable.erase(fake_it);
-			delete fake_server;
-			++double_vm_it;
-			continue;
-		}
-			else{
-				//从当前节点中删除此虚拟机
-				set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = double_vm_it++;
-				//删除前记录此虚拟机的id，用于部署
-				uint32_t out_vm_id = tmp_it->vm_id;
-				removeVM((tmp_it)->vm_id, node_out->second);
-
-
-				//新节点部署此虚拟机				
-				uint32_t in_server_seq = right_it->second;
-				DoubleNodeTable.erase(fake_it);
-				delete fake_server; 
-
-				S_MigrationInfo one_migration_info;
-				deployVM(out_vm_id, in_server_seq, one_migration_info);
-				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-
-				//迁移数目－1
-				--remaining_migrate_vm_num;
-				migrate_num++;
-				if(remaining_migrate_vm_num == 0)return;
-				continue;
-			}
-			++double_vm_it;
-		}
-
-
-
-		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator vm_end = cur_node->single_node_deploy_table.end();
-		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator vm_it = cur_node->single_node_deploy_table.begin(); //指向当前虚拟机
-
-		for(; vm_it != vm_end;){
-			const S_VM & vm = *vm_it->vm;
-			C_node * fake_node = new C_node(vm);
-			//将这个假节点插入到单节点表中，然后以其位置为基准，向右(剩余节点容量升序)寻找最接近的节点
-			SingleNodeTable.emplace(fake_node, 0);
-			map<C_node*, uint32_t>::iterator fake_it = SingleNodeTable.find(fake_node);
-			map<C_node*, uint32_t>::iterator right_it = fake_it;
-
-			while(++right_it != SingleNodeTable.end()){
-				if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_mem_num >= vm.mem_num){
-					if(right_it == SingleNodeTable.find(node_out->first)){
-						continue;
-					}
-					break;
-				}	
-			}
-			SingleNodeTable.erase(fake_it);
-			delete fake_node;
-			//如果当前无节点可以容纳此虚拟机
-			if(right_it == SingleNodeTable.end()){
-				vm_it++;
-				continue;
-			}
-			else{
-				
-				//新节点部署此虚拟机				
-				uint32_t in_server_seq = right_it->second;
-				S_MigrationInfo one_migration_info;
-
-				C_node* in_node = right_it->first;
-				C_node* the_other_node = My_servers[right_it->second]->A;
-				if(the_other_node == in_node){
-				the_other_node = My_servers[right_it->second]->B;
-				}
-				if(the_other_node->remaining_cpu_num >= vm.cpu_num && the_other_node->remaining_mem_num >= vm.mem_num){
-					int32_t r1_cpu = in_node->remaining_cpu_num;
-					int32_t r1_mem = in_node->remaining_mem_num;
-					int32_t r2_cpu = the_other_node->remaining_cpu_num;
-					int32_t r2_mem = the_other_node->remaining_mem_num;
-					int32_t to_r1_val = pow(r1_cpu - vm.cpu_num - r2_cpu, 2) + pow(r1_mem - vm.mem_num - r2_mem, 2);
-					int32_t to_r2_val = pow(r2_cpu - vm.cpu_num - r1_cpu, 2) + pow(r2_mem - vm.mem_num - r1_mem, 2);
-					if(to_r2_val < to_r1_val){
-						if(the_other_node == node_out->first){
-							vm_it++;
-							continue;
-						}
-
-						//从当前节点中删除此虚拟机
-						set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = vm_it++;
-						//删除前记录此虚拟机的id，用于部署
-						uint32_t out_vm_id = tmp_it->vm_id;
-						removeVM((tmp_it)->vm_id, node_out->second);
-						
-						deployVM(out_vm_id, in_server_seq, one_migration_info, the_other_node);
-						day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-						
-						//迁移数目－1
-						--remaining_migrate_vm_num;
-						migrate_num++;
-						if(remaining_migrate_vm_num == 0)return;
-						continue;
-					}
-				}
-
-				//从当前节点中删除此虚拟机
-				set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = vm_it++;
-				//删除前记录此虚拟机的id，用于部署
-				uint32_t out_vm_id = tmp_it->vm_id;
-				removeVM((tmp_it)->vm_id, node_out->second);
-
-				deployVM(out_vm_id, in_server_seq, one_migration_info, in_node);
-				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-
-				//迁移数目－1
-				--remaining_migrate_vm_num;
-				migrate_num++;
-				if(remaining_migrate_vm_num == 0)return;
-				continue;
-			}
-			++vm_it;
-		}
-
-
-	}
  }
 
-*/
 //主流程
 void process() {
 	for(int32_t t = 0; t != T; ++t){

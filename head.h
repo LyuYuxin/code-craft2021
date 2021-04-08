@@ -15,8 +15,8 @@
 #include<random>
 #define _CRT_SECURE_NO_WARNINGS
 
-#define SUBMIT//是否提交
-//#define MIGRATE//是否迁移
+//#define SUBMIT//是否提交
+#define MIGRATE//是否迁移
 //#define EARLY_STOPPING//是否迁移时短路判断 
 //#define DO_NODE_BALANCE
 
@@ -147,7 +147,7 @@ public:
 		return static_cast<float>(total_cpu_num - remaining_cpu_num) / total_cpu_num;
 	}
 
-	float get_total_used_rate(){
+	float get_total_used_rate()const {
 		return static_cast<float>(total_cpu_num + total_mem_num - remaining_mem_num - remaining_cpu_num) / (total_mem_num + total_cpu_num);
 	}
 
@@ -193,10 +193,9 @@ public:
 	static int32_t purchase_seq_num;//静态成员，用于存储当前已购买服务器总数，也用于给新买的服务器赋予序列号
 };
 
-template<class _Ty>
 struct less_DoubleNode
 {
-	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
+	bool operator()(const C_BoughtServer*  p_Left, const C_BoughtServer* p_Right) const
 	{
 		float l_resources = p_Left->get_double_node_avail_resources();
 		float r_resources = p_Right->get_double_node_avail_resources();
@@ -225,10 +224,9 @@ struct less_BoughtServer
 	}
 };
 
-template<class _Ty>
 struct less_SingleNode
 {
-	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
+	bool operator()(const C_node* p_Left, const C_node* p_Right) const
 	{
 		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_mem_num) + 0.001 * (1 / (1 + p_Left->get_total_used_rate()));
 		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_mem_num)  + 0.001 * (1 / (1 + p_Right->get_total_used_rate()));
@@ -293,8 +291,8 @@ extern vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
 
 
 extern vector<C_BoughtServer*> My_servers;//已购买的服务器列表
-extern map<C_BoughtServer*, uint32_t, less_DoubleNode<C_BoughtServer*> > DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
-extern map<C_node*, uint32_t, less_SingleNode<C_node*> > SingleNodeTable;//将所有服务器的节点组织成一个单节点表， 值为服务器seq
+extern map<C_BoughtServer*, uint32_t, less_DoubleNode> DoubleNodeTable;//将所有服务器组织成一个双节点表，值为服务器seq
+extern map<C_node*, uint32_t, less_SingleNode> SingleNodeTable;//将所有服务器的节点组织成一个单节点表， 值为服务器seq
 extern unordered_map<uint32_t, S_DeploymentInfo> GlobalVMDeployTable;//全局虚拟机部署表，记录虚拟机id和相应的部署信息
 extern unordered_map<uint32_t, uint32_t> GlobalServerSeq2IdMapTable;//全局服务器id表，用于从购买序列号到输出id的映射
 extern unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局VMadd请求表，用于从虚拟机id映射到虚拟机信息
