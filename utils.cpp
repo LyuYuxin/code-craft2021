@@ -57,14 +57,3 @@ float C_BoughtServer :: cal_total_resource_used_rate() {
 	total_resource_used_rate = total_rate;
 	return total_rate;
 }
-
-//根据两个节点使用率均衡程度对服务器排序，差值越大越不均衡
-bool com_node_used_balance_rate(C_BoughtServer& s1, C_BoughtServer& s2) {
-	return abs(s1.A->cpu_used_rate + s1.A->mem_used_rate - (s1.B->cpu_used_rate + s1.B->mem_used_rate)) < abs(s2.A->cpu_used_rate + s2.A->mem_used_rate - (s2.B->cpu_used_rate + s2.B->mem_used_rate));
-}
-
-//对服务器按利用率升序排序
-bool com_used_rate(C_BoughtServer* p_A, C_BoughtServer* p_B) {
-	return *p_A < *p_B;
-}
-

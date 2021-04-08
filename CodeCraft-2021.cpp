@@ -8,7 +8,8 @@ const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.6f;
 //购买服务器参数
 const float TOTAL_COST_RATIO =0.00055f; 
 
-
+//判断虚拟机是否平衡
+const float BALANCE_THRESHOLD = 0.3f;
 
 //全局变量定义
 //*****************************************************************************************************
@@ -262,6 +263,8 @@ void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<u
 			float vol_dis = sqrt(ServerList[i].cpu_num - required_cpu) + sqrt(ServerList[i].mem_num - required_mem);
 			//服务器成本
 			float purchase_cost = (T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost;
+			//float purchase_cost = ((T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost) / (ServerList[i].mem_num + ServerList[i].cpu_num);
+
 			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost;
 
 			if(total_dis < min_dis){
@@ -304,19 +307,41 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		map<C_node*, uint32_t>::iterator fake_it = SingleNodeTable.find(fake_node);
 		assert(fake_it != SingleNodeTable.end());
 		map<C_node*, uint32_t>::iterator right_it = fake_it;
-
+		
+		//得到所有可容纳当前vm的节点
+		vector<C_node *> accomdatable_nodes;
 		while(++right_it != SingleNodeTable.end()){
 			if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_mem_num >= vm.mem_num){
-				break;
+				accomdatable_nodes.emplace_back(right_it->first);
 			}	
-		}
+		}	
+		//sort(accomdatable_nodes.begin(), accomdatable_nodes.end(), com_single_node_balance_rate);
+
+		
 		//如果当前无节点可以容纳此虚拟机
-		if(right_it == SingleNodeTable.end()){
+		if(accomdatable_nodes.size() == 0){
 			SingleNodeTable.erase(fake_it);
 			delete fake_node;
 			return false;
 		}
 		else{
+			//找一个部署后cpu内存比可以变得更均衡的节点
+			float min_dis = MAXFLOAT;
+			uint32_t min_idx = 0;
+			for(uint32_t i = 0; i != accomdatable_nodes.size(); ++i){
+
+				float cur_div_val = static_cast<float>(accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num) / (accomdatable_nodes[i]->remaining_mem_num - vm.mem_num);
+				float div_dis = abs(cur_div_val - 1.0f);
+				float cur_dis =  (accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num)* div_dis + pow(accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num, 2) + pow(accomdatable_nodes[i]->remaining_mem_num - vm.mem_num, 2);
+
+				if(cur_dis < min_dis){
+					min_dis = cur_dis;
+					min_idx = i;
+				}
+			}
+		
+			right_it = SingleNodeTable.find(accomdatable_nodes[min_idx]);
+
 			uint32_t server_seq = right_it->second;
 			C_node* node = right_it->first;
 			C_node* the_other_node = My_servers[right_it->second]->A;
@@ -376,7 +401,6 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		}
 	}
 }
-
 
 
 //  //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
@@ -551,74 +575,243 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
  }
 
 
+/*
+void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balance){
+	int migrate_num = 0;
+	int32_t remaining_migrate_vm_num=get_max_migrate_num();
+	int32_t max_rand_migrate_num = remaining_migrate_vm_num * 0.1;
+	int32_t singleNodeLength=SingleNodeTable.size();
+	srand((unsigned)time(nullptr));
 
-// void full_loaded_migrate_vm(S_DayTotalDecisionInfo &day_decision,bool do_balance)
-// {
-// 	int32_t remaining_migrate_vm_num=get_max_migrate_num();
-// 	if(remaining_migrate_vm_num<1) return;
+	if(remaining_migrate_vm_num<1) return;
+
+	int32_t count=0;
+
+	bool flag=false;
+
+	while(max_rand_migrate_num)
+	{
+		// count++;
+		// if(count>singleNodeLength/100) break;
+ 		int32_t randomNum_from=rand()%singleNodeLength;
+		int32_t randomNum_to=rand()%singleNodeLength;
+		while(randomNum_from==randomNum_to)
+		{
+			randomNum_from=rand()%singleNodeLength;
+			randomNum_to=rand()%singleNodeLength;
+		}
+
+		map<C_node*,uint32_t>::iterator migrateFrom_it;
+		map<C_node*,uint32_t>::iterator migrateTo_it;
+		migrateFrom_it=SingleNodeTable.begin();
+		advance(migrateFrom_it,randomNum_from);
+		migrateTo_it=SingleNodeTable.begin();
+		advance(migrateTo_it,randomNum_to);
+
+		set<C_VM_Entity>::iterator set_it;
+		for(set_it=migrateFrom_it->first->single_node_deploy_table.begin();set_it!=migrateFrom_it->first->single_node_deploy_table.end();++set_it)
+		{
+			int32_t needCpuNum=(*set_it).vm->cpu_num;
+			int32_t needMemNum=(*set_it).vm->mem_num;
+
+			if(migrateTo_it->first->remaining_cpu_num<needCpuNum||migrateTo_it->first->remaining_mem_num<needMemNum) continue;
+
+			float before=0.0f;
+			before=exp(migrateFrom_it->first->remaining_cpu_num+migrateFrom_it->first->remaining_mem_num)+exp(migrateTo_it->first->remaining_cpu_num+migrateTo_it->first->remaining_mem_num);
+			float after=0.0f;
+			after=exp(migrateFrom_it->first->remaining_cpu_num+needCpuNum+migrateFrom_it->first->remaining_mem_num+needMemNum)+exp(migrateTo_it->first->remaining_cpu_num-needCpuNum+migrateTo_it->first->remaining_mem_num-needMemNum);
+
+			
+			if(before>=after) continue;
+			else{
+				//迁移操作
+				S_MigrationInfo one_migration_info;
+				migrate_vm(set_it->vm_id, migrateTo_it->second,one_migration_info,migrateTo_it->first);
+				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
+				max_rand_migrate_num--;
+				migrate_num++;
+				break;
+
+
+			}
+			
+			if(abs(after-before)/before<=0.1) flag=true;
+			
+		}
+		if(flag) break;
+	}
+	cout<<"迁移了"<<migrate_num<<"次"<<endl;
+
 	
-	
-// 	int32_t	singleNodeLength = SingleNodeTable.size();
-// 	int32_t max_iter_num = static_cast<int32_t>(My_servers.size() * MAX_MIGRATE_OUT_SERVER_RATIO) * 2;
-// 	if(max_iter_num < 1)return;
+	remaining_migrate_vm_num -= max_rand_migrate_num;
+	//int32_t remaining_migrate_vm_num = get_max_migrate_num();//当天可用迁移量
+	if(remaining_migrate_vm_num == 0) return;
 
-// 	int32_t count=0;
-// 	bool flag=false;
+	//根据单节点表对所有节点上的单节点部署虚拟机进行迁移
+	int32_t max_out = 2 * static_cast<int32_t>(My_servers.size() * MAX_MIGRATE_OUT_SERVER_RATIO);	//查看的单节点个数
+	if(max_out < 2)return;
 
-// 	std::mt19937 rng;
-//     rng.seed(std::random_device()());
-//     std::uniform_int_distribution<std::mt19937::result_type> randLeft(0, singleNodeLength /2 - 1);
-// 	std::uniform_int_distribution<std::mt19937::result_type> randRight(singleNodeLength /2, singleNodeLength - 1);
+	map<C_node*, uint32_t, less_SingleNode<C_node*> > tmp_SingleNodeTable(SingleNodeTable);
+
+	//开始遍历当前迁出服务器所有已有的虚拟机
+	map<C_node*, uint32_t>::iterator node_out = tmp_SingleNodeTable.end();
+	--node_out;
+
+	for(int32_t out = 0;out != max_out; ++out,--node_out){
 
 
-// 	while(++count <= max_iter_num)
-// 	{
+		//把所有该节点的单节点虚拟机拿出来重新部署
+
+		//拿到当前节点的指针
+		C_node *cur_node = node_out->first;
+
 		
-//  		int32_t randomNum_from= randRight(rng);
-// 		int32_t randomNum_to=randLeft(rng);
+		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator double_vm_end = cur_node->double_node_deploy_table.end();
+		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator double_vm_it = cur_node->double_node_deploy_table.begin(); //指向当前虚拟机
 		
-// 		map<C_node*,uint32_t>::iterator migrateFrom_it;
-// 		map<C_node*,uint32_t>::iterator migrateTo_it;
-// 		migrateFrom_it=SingleNodeTable.begin();
-// 		advance(migrateFrom_it,randomNum_from);
+		for(; double_vm_it != double_vm_end;){
+			const S_VM & vm = *(double_vm_it->vm);
+			C_BoughtServer * fake_server = new C_BoughtServer(vm);
+			//将这个假节点插入到单节点表中，然后以其位置为基准，向右(剩余节点容量升序)寻找最接近的节点
+			DoubleNodeTable.emplace(fake_server, 0);
+			map<C_BoughtServer*, uint32_t>::iterator fake_it = DoubleNodeTable.find(fake_server);
+			map<C_BoughtServer*, uint32_t>::iterator right_it = fake_it;
 
-// 		set<C_VM_Entity>::iterator set_it = migrateFrom_it->first->single_node_deploy_table.begin();
-// 		set<C_VM_Entity>::iterator set_end = migrateFrom_it->first->single_node_deploy_table.end();
-// 		if(set_it == set_end)continue;
-
-// 		migrateTo_it=SingleNodeTable.begin();
-// 		advance(migrateTo_it,randomNum_to);
-
-// 		for(;set_it!= set_end;++set_it)
-// 		{
-// 			int32_t needCpuNum=set_it->vm->cpu_num;
-// 			int32_t needMemNum=set_it->vm->mem_num;
-
-// 			if(migrateTo_it->first->remaining_cpu_num<needCpuNum||migrateTo_it->first->remaining_mem_num<needMemNum) break;
-
-// 			float before = pow(migrateFrom_it->first->remaining_cpu_num+migrateFrom_it->first->remaining_mem_num, 2)+pow(migrateTo_it->first->remaining_cpu_num+migrateTo_it->first->remaining_mem_num, 2);
-// 			float after = pow(migrateFrom_it->first->remaining_cpu_num + needCpuNum+migrateFrom_it->first->remaining_mem_num + needMemNum, 2)+pow(migrateTo_it->first->remaining_cpu_num - needCpuNum+migrateTo_it->first->remaining_mem_num - needMemNum, 2);
-
-			
-// 			if(before>=after) break;
-// 			else{
-// 				//迁移操作
-// 				S_MigrationInfo one_migration_info;
-// 				migrate_vm(set_it->vm_id, migrateTo_it->second,one_migration_info, migrateTo_it->first);
-// 				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-// 				--remaining_migrate_vm_num;
-// 				if(remaining_migrate_vm_num == 0) return;
-// 				break;
-// 			}
-			
-// 			//if(abs(after-before)/before<=0.1) flag=true;
-			
-// 		}
-// 		//if(flag) break;
-// 	}
-// }
+			while(++right_it != DoubleNodeTable.end()){
+			if(right_it->first->A->remaining_cpu_num >= vm.half_cpu_num &&
+			right_it->first->B->remaining_cpu_num >= vm.half_cpu_num&&
+			right_it->first->A->remaining_mem_num >= vm.half_mem_num&&
+			right_it->first->B->remaining_mem_num >= vm.half_mem_num){
+				if(right_it == DoubleNodeTable.find(My_servers[node_out->second])){
+					continue;
+					}
+				break;
+			}
+		}
+		if(right_it == DoubleNodeTable.end()){
+			DoubleNodeTable.erase(fake_it);
+			delete fake_server;
+			++double_vm_it;
+			continue;
+		}
+			else{
+				//从当前节点中删除此虚拟机
+				set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = double_vm_it++;
+				//删除前记录此虚拟机的id，用于部署
+				uint32_t out_vm_id = tmp_it->vm_id;
+				removeVM((tmp_it)->vm_id, node_out->second);
 
 
+				//新节点部署此虚拟机				
+				uint32_t in_server_seq = right_it->second;
+				DoubleNodeTable.erase(fake_it);
+				delete fake_server; 
+
+				S_MigrationInfo one_migration_info;
+				deployVM(out_vm_id, in_server_seq, one_migration_info);
+				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
+
+				//迁移数目－1
+				--remaining_migrate_vm_num;
+				migrate_num++;
+				if(remaining_migrate_vm_num == 0)return;
+				continue;
+			}
+			++double_vm_it;
+		}
+
+
+
+		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator vm_end = cur_node->single_node_deploy_table.end();
+		set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator vm_it = cur_node->single_node_deploy_table.begin(); //指向当前虚拟机
+
+		for(; vm_it != vm_end;){
+			const S_VM & vm = *vm_it->vm;
+			C_node * fake_node = new C_node(vm);
+			//将这个假节点插入到单节点表中，然后以其位置为基准，向右(剩余节点容量升序)寻找最接近的节点
+			SingleNodeTable.emplace(fake_node, 0);
+			map<C_node*, uint32_t>::iterator fake_it = SingleNodeTable.find(fake_node);
+			map<C_node*, uint32_t>::iterator right_it = fake_it;
+
+			while(++right_it != SingleNodeTable.end()){
+				if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_mem_num >= vm.mem_num){
+					if(right_it == SingleNodeTable.find(node_out->first)){
+						continue;
+					}
+					break;
+				}	
+			}
+			SingleNodeTable.erase(fake_it);
+			delete fake_node;
+			//如果当前无节点可以容纳此虚拟机
+			if(right_it == SingleNodeTable.end()){
+				vm_it++;
+				continue;
+			}
+			else{
+				
+				//新节点部署此虚拟机				
+				uint32_t in_server_seq = right_it->second;
+				S_MigrationInfo one_migration_info;
+
+				C_node* in_node = right_it->first;
+				C_node* the_other_node = My_servers[right_it->second]->A;
+				if(the_other_node == in_node){
+				the_other_node = My_servers[right_it->second]->B;
+				}
+				if(the_other_node->remaining_cpu_num >= vm.cpu_num && the_other_node->remaining_mem_num >= vm.mem_num){
+					int32_t r1_cpu = in_node->remaining_cpu_num;
+					int32_t r1_mem = in_node->remaining_mem_num;
+					int32_t r2_cpu = the_other_node->remaining_cpu_num;
+					int32_t r2_mem = the_other_node->remaining_mem_num;
+					int32_t to_r1_val = pow(r1_cpu - vm.cpu_num - r2_cpu, 2) + pow(r1_mem - vm.mem_num - r2_mem, 2);
+					int32_t to_r2_val = pow(r2_cpu - vm.cpu_num - r1_cpu, 2) + pow(r2_mem - vm.mem_num - r1_mem, 2);
+					if(to_r2_val < to_r1_val){
+						if(the_other_node == node_out->first){
+							vm_it++;
+							continue;
+						}
+
+						//从当前节点中删除此虚拟机
+						set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = vm_it++;
+						//删除前记录此虚拟机的id，用于部署
+						uint32_t out_vm_id = tmp_it->vm_id;
+						removeVM((tmp_it)->vm_id, node_out->second);
+						
+						deployVM(out_vm_id, in_server_seq, one_migration_info, the_other_node);
+						day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
+						
+						//迁移数目－1
+						--remaining_migrate_vm_num;
+						migrate_num++;
+						if(remaining_migrate_vm_num == 0)return;
+						continue;
+					}
+				}
+
+				//从当前节点中删除此虚拟机
+				set<C_VM_Entity, less_VM<C_VM_Entity> >::iterator tmp_it = vm_it++;
+				//删除前记录此虚拟机的id，用于部署
+				uint32_t out_vm_id = tmp_it->vm_id;
+				removeVM((tmp_it)->vm_id, node_out->second);
+
+				deployVM(out_vm_id, in_server_seq, one_migration_info, in_node);
+				day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
+
+				//迁移数目－1
+				--remaining_migrate_vm_num;
+				migrate_num++;
+				if(remaining_migrate_vm_num == 0)return;
+				continue;
+			}
+			++vm_it;
+		}
+
+
+	}
+ }
+
+*/
 //主流程
 void process() {
 	for(int32_t t = 0; t != T; ++t){

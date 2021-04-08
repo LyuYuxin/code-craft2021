@@ -16,7 +16,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #define SUBMIT//是否提交
-#define MIGRATE//是否迁移
+//#define MIGRATE//是否迁移
 //#define EARLY_STOPPING//是否迁移时短路判断 
 //#define DO_NODE_BALANCE
 
@@ -103,7 +103,9 @@ public:
 		total_cpu_num(s.cpu_num / 2),
 		total_mem_num(s.mem_num / 2),
 		cpu_used_rate(0), mem_used_rate(0)
-	{}
+	{
+		cpu_div_mem = static_cast<float>(remaining_cpu_num) / remaining_mem_num;
+	}
 	C_node(const S_VM& vm, bool is_half = false) {
 		if (!is_half) {
 			remaining_mem_num = vm.mem_num;
@@ -112,6 +114,7 @@ public:
 			total_cpu_num = vm.cpu_num;
 			cpu_used_rate = 0.0f;
 			mem_used_rate = 0.0f;
+			cpu_div_mem = static_cast<float>(remaining_cpu_num) / remaining_mem_num;
 		}
 		else {
 			remaining_mem_num = vm.mem_num / 2;
@@ -120,6 +123,8 @@ public:
 			total_mem_num = remaining_mem_num;
 			cpu_used_rate = 0.0f;
 			mem_used_rate = 0.0f;
+			cpu_div_mem = static_cast<float>(remaining_cpu_num) / remaining_mem_num;
+
 		}
 	}
 
@@ -146,11 +151,17 @@ public:
 		return static_cast<float>(total_cpu_num + total_mem_num - remaining_mem_num - remaining_cpu_num) / (total_mem_num + total_cpu_num);
 	}
 
+	float get_cpu_div_mem(){
+		cpu_div_mem = static_cast<float>(remaining_cpu_num) / remaining_mem_num;
+		return cpu_div_mem;
+	}
+
 	set<C_VM_Entity, less_VM<C_VM_Entity>>single_node_deploy_table;//用于记录此节点上部署的单节点虚拟机信息
 	set<C_VM_Entity, less_VM<C_VM_Entity> >double_node_deploy_table;//用于记录此节点上部署的双节点部署信息
 	int32_t total_cpu_num, total_mem_num;
 	int32_t remaining_cpu_num;
 	int32_t remaining_mem_num;
+	float cpu_div_mem;
 	float cpu_used_rate;
 	float mem_used_rate;
 };
@@ -320,13 +331,10 @@ inline bool com_VM(const pair<uint32_t, const S_VM*>& A, const pair<uint32_t, co
 	return A.second->cpu_num + A.second->mem_num < B.second->mem_num + B.second->cpu_num;
 }
 
+inline bool com_single_node_balance_rate(C_node* & A, C_node* &B){
+	return A->get_cpu_div_mem() < B->get_cpu_div_mem();
+}
 
-//对服务器按利用率升序排序
-bool com_used_rate(C_BoughtServer* p_A, C_BoughtServer* p_B);
-
-
-//根据两个节点使用率均衡程度对服务器排序，差值越大越不均衡
-bool com_node_used_balance_rate(C_BoughtServer& s1, C_BoughtServer& s2);
 
 
 //部署虚拟机用
