@@ -11,8 +11,6 @@ const float TOTAL_COST_RATIO =0.00055f;
 //判断虚拟机是否平衡
 const float BALANCE_THRESHOLD = 0.3f;
 
-const int SMALL_CPU_THRESHOLD = 10;
-const int SMALL_MEM_THRESHOLD = 10;
 //全局变量定义
 //*****************************************************************************************************
 //*****************************************************************************************************
@@ -110,11 +108,6 @@ void deployVM(int vm_id, uint32_t server_seq, S_DeploymentInfo& one_deployment_i
 		one_deployment_info.server_seq = server_seq;
 		//更新全局虚拟机部署表
 		GlobalVMDeployTable.emplace(vm_id, one_deployment_info);
-		
-		//更新小虚拟机表
-		if(!vm.is_double_node and vm.cpu_num < SMALL_CPU_THRESHOLD and vm.mem_num < SMALL_MEM_THRESHOLD){
-			small_VMS.emplace(vm_id);
-		}
 	}
 
 //迁移虚拟机用部署函数
@@ -251,8 +244,6 @@ void removeVM(uint32_t vm_id, uint32_t server_seq) {
 		assert(s->B->remaining_cpu_num <= s->server_info.cpu_num / 2);
 		assert(s->B->remaining_mem_num <= s->server_info.mem_num / 2);
 
-		
-		small_VMS.erase(vm_id);
 		GlobalVMDeployTable.erase(vm_id);
 	}
 
@@ -588,45 +579,8 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 			++vm_it;
 		}
 
-
-
 	}
 
-	set<uint32_t> tmp_small_VMS(small_VMS);
-	for(map<C_BoughtServer*, uint32_t>::iterator i = DoubleNodeTable.begin(); i != DoubleNodeTable.end(); ++i){
-			
-			C_BoughtServer* cur_server = i->first;
-
-			for(set<uint32_t>::iterator j = tmp_small_VMS.begin(); j != tmp_small_VMS.end();){
-				
-				const S_VM * vm = GlobalVMDeployTable[*j].vm_info;
-				
-				if(cur_server->A->remaining_cpu_num >= vm->cpu_num &&
-				cur_server->A->remaining_mem_num >= vm->mem_num){
-					S_MigrationInfo one_migration_info;
-					set<uint32_t>::iterator tmp_it = j++;
-					migrate_vm(*tmp_it,  (i++)->second, one_migration_info, cur_server->A);
-					--i;
-					day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-					tmp_small_VMS.erase(tmp_it);
-					if(--remaining_migrate_vm_num == 0)return ;
-					continue;
-				}
-				else if(cur_server->B->remaining_cpu_num >= vm->cpu_num &&
-				cur_server->B->remaining_mem_num >= vm->mem_num){
-					S_MigrationInfo one_migration_info;
-					set<uint32_t>::iterator tmp_it = j++;
-					migrate_vm(*tmp_it,  (i++)->second, one_migration_info, cur_server->B);
-					--i;
-					tmp_small_VMS.erase(tmp_it);
-					day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-					if(--remaining_migrate_vm_num == 0)return ;
-					continue;
-				}
-				++j;
-			}
-		}
-	
  }
 
 //主流程
