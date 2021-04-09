@@ -317,10 +317,10 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		map<C_node*, uint32_t>::iterator right_it = fake_it;
 		
 		//得到所有可容纳当前vm的节点
-		vector<C_node *> accomdatable_nodes;
+		vector<map<C_node*, uint32_t>::iterator> accomdatable_nodes;
 		while(++right_it != SingleNodeTable.end()){
 			if(right_it->first->remaining_cpu_num >= vm.cpu_num && right_it->first->remaining_mem_num >= vm.mem_num){
-				accomdatable_nodes.emplace_back(right_it->first);
+				accomdatable_nodes.emplace_back(right_it);
 			}	
 		}	
 		//sort(accomdatable_nodes.begin(), accomdatable_nodes.end(), com_single_node_balance_rate);
@@ -336,11 +336,11 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 			//找一个部署后cpu内存比可以变得更均衡的节点
 			float min_dis = MAXFLOAT;
 			uint32_t min_idx = 0;
+			C_BoughtServer* s = nullptr;
 			for(uint32_t i = 0; i != accomdatable_nodes.size(); ++i){
-
-				float cur_div_val = static_cast<float>(accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num) / (accomdatable_nodes[i]->remaining_mem_num - vm.mem_num);
-				float div_dis = abs(cur_div_val - 1.0f);
-				float cur_dis =  (accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num)* div_dis + pow(accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num, 2) + pow(accomdatable_nodes[i]->remaining_mem_num - vm.mem_num, 2);
+				s = My_servers[accomdatable_nodes[i]->second];
+				float cur_dis = pow(vm.mem_num - s->A->remaining_mem_num - s->B->remaining_mem_num, 2) +
+							pow(vm.cpu_num - s->A->remaining_cpu_num - s->B->remaining_cpu_num, 2);
 
 				if(cur_dis < min_dis){
 					min_dis = cur_dis;
@@ -348,7 +348,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 				}
 			}
 		
-			right_it = SingleNodeTable.find(accomdatable_nodes[min_idx]);
+			right_it = accomdatable_nodes[min_idx];
 
 			uint32_t server_seq = right_it->second;
 			C_node* node = right_it->first;
@@ -385,21 +385,35 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		DoubleNodeTable.emplace(fake_server, 0);
 		map<C_BoughtServer*, uint32_t>::iterator fake_it = DoubleNodeTable.find(fake_server);
 		map<C_BoughtServer*, uint32_t>::iterator right_it = fake_it;
+
+		vector<C_BoughtServer*>acc_servers;
+
 		while(++right_it != DoubleNodeTable.end()){
 			if(right_it->first->A->remaining_cpu_num >= vm.half_cpu_num &&
 			right_it->first->B->remaining_cpu_num >= vm.half_cpu_num&&
 			right_it->first->A->remaining_mem_num >= vm.half_mem_num&&
 			right_it->first->B->remaining_mem_num >= vm.half_mem_num){
-				break;
+				acc_servers.emplace_back(right_it->first);
 			}
 		}
-		if(right_it == DoubleNodeTable.end()){
+		if(acc_servers.size() == 0){
 			DoubleNodeTable.erase(fake_it);
 			delete fake_server;
 			return false;
 		}
 		else{
-			uint32_t server_seq = right_it->second;
+			C_BoughtServer* p_best_server;
+			float min_dis = MAXFLOAT;
+			for(uint32_t i = 0; i != acc_servers.size(); ++i){
+				float cur_dis = pow(vm.cpu_num - acc_servers[i]->A->remaining_cpu_num - acc_servers[i]->B->remaining_cpu_num, 2) + 
+								pow(vm.mem_num - acc_servers[i]->A->remaining_mem_num - acc_servers[i]->B->remaining_mem_num, 2);
+				if(cur_dis < min_dis){
+					min_dis = cur_dis;
+					p_best_server = acc_servers[i];
+				}
+			}
+
+			uint32_t server_seq = DoubleNodeTable.find(p_best_server)->second;
 
 			DoubleNodeTable.erase(fake_it);
 			delete fake_server;
