@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include "head.h"
 
 //可调参数列表
@@ -253,7 +255,7 @@ void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<u
 		//找到一台服务器
 		size_t size = ServerList.size();
 		int min_idx = 0;
-		float min_dis = MAXFLOAT;
+		float min_dis = FLT_MAX;
 		vector<int> accomadatable_seqs;
 		
 		//先找到所有可容纳当前请求的服务器型号
@@ -331,7 +333,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		}
 		else{
 			//找一个部署后cpu内存比可以变得更均衡的节点
-			float min_dis = MAXFLOAT;
+			float min_dis = FLT_MAX;
 			uint32_t min_idx = 0;
 			C_BoughtServer* s = nullptr;
 			for(uint32_t i = 0; i != accomdatable_nodes.size(); ++i){
@@ -405,7 +407,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		}
 		else{
 			C_BoughtServer* p_best_server;
-			float min_dis = MAXFLOAT;
+			float min_dis = FLT_MAX;
 			for(uint32_t i = 0; i != acc_servers.size(); ++i){
 				float cur_dis = pow(vm.cpu_num - acc_servers[i]->A->remaining_cpu_num - acc_servers[i]->B->remaining_cpu_num, 2) + 
 								pow(vm.mem_num - acc_servers[i]->A->remaining_mem_num - acc_servers[i]->B->remaining_mem_num, 2);
@@ -432,12 +434,12 @@ map<uint32_t, S_DeploymentInfo> buy_server(const vector<map<const S_Request*, ui
 
 	//找到一台服务器
 	vector<int32_t>best_server_idxs;
-	for(int32_t i = 0; i != batch_requests.size(); ++i){
-		int32_t required_cpu = VMList[batch_requests[i]->first->vm_type].cpu_num;
-		int32_t required_mem = VMList[batch_requests[i]->first->vm_type].mem_num;
+	for(int32_t n = 0; n != batch_requests.size(); ++n){
+		int32_t required_cpu = VMList[batch_requests[n]->first->vm_type].cpu_num;
+		int32_t required_mem = VMList[batch_requests[n]->first->vm_type].mem_num;
 
 		int min_idx = 0;
-		float min_dis = MAXFLOAT;
+		float min_dis = FLT_MAX;
 		vector<int> accomadatable_seqs;
 
 		//先找到所有可容纳当前请求的服务器型号
@@ -455,13 +457,12 @@ map<uint32_t, S_DeploymentInfo> buy_server(const vector<map<const S_Request*, ui
 			//服务器成本
 			float purchase_cost =  (T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost;
 			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost;
-			
 			if(total_dis < min_dis){
 				min_dis = total_dis;
 				min_idx = i;
 			}
 		}
-		best_server_idxs.emplace_back(min_idx);
+		best_server_idxs.emplace_back(accomadatable_seqs[min_idx]);
 	}
 
 	uint32_t size = best_server_idxs.size();
@@ -490,16 +491,22 @@ map<uint32_t, S_DeploymentInfo> buy_server(const vector<map<const S_Request*, ui
 
 	map<uint32_t, S_DeploymentInfo> results;
 
+	int32_t rand_times = 0;
 	for(int32_t i = 0; i != batch_requests.size(); ){
 		S_DeploymentInfo one_deployment_info;
 		if(best_fit(*(batch_requests[i]->first), one_deployment_info)){
 			results.emplace(batch_requests[i]->second, one_deployment_info);
 			++i;
+			rand_times = 0;
 			continue;
 		}
 
 		//不能部署时，随机买一台服务器
 		cur_bought_server_idx = rand()%size;
+
+		if(++rand_times == 3){
+			cur_bought_server_idx = i;
+		}
 
 		const S_Server& server =  ServerList[best_server_idxs[cur_bought_server_idx]];
 		p_bought_server = new C_BoughtServer(server);
@@ -799,7 +806,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 			in_double_node_region.erase(fake_it);
 			delete fake_server; 
 
-			float min_dis = MAXFLOAT;
+			float min_dis = FLT_MAX;
 			C_BoughtServer * best_s = nullptr;
 			for(int32_t i = 0; i != acc_servers.size(); ++i){
 				float cur_dis = pow(vm.cpu_num - acc_servers[i]->A->remaining_cpu_num - acc_servers[i]->B->remaining_cpu_num, 2) + 
@@ -874,7 +881,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 			in_single_node_region.erase(fake_it);
 			delete fake_node; 
 
-			float min_dis = MAXFLOAT;
+			float min_dis = FLT_MAX;
 			int32_t min_idx = 0;
 			for(int32_t i = 0; i != acc_nodes.size(); ++i){
 				C_BoughtServer *cur_s = My_servers[acc_nodes[i]->second];
@@ -917,6 +924,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 void process() {
 	srand((unsigned)time(NULL));
 	for(int32_t t = 0; t != T; ++t){
+		cout << "day" <<t<< endl;
 		S_DayTotalDecisionInfo day_decision;
 
 		const S_DayRequest& day_request = Requests[t];
@@ -1041,9 +1049,6 @@ void process() {
 		write_standard_output(day_decision);
 		#endif
 
-		#ifndef SUBMIT
-		std::cout<<"第"<<t<<"天，共有"<<My_servers.size()<<"台服务器"<<endl;
-		#endif
 		
 		if(t < T - K){
 			read_one_request();

@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #pragma once
 #include<cstdlib>
 #include<cstdio>
@@ -13,7 +15,6 @@
 #include<queue>
 #include<set>
 #include<random>
-#define _CRT_SECURE_NO_WARNINGS
 
 //#define SUBMIT//是否提交
 #define MIGRATE//是否迁移
