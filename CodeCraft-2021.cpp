@@ -255,7 +255,7 @@ void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<u
 		//找到一台服务器
 		size_t size = ServerList.size();
 		int min_idx = 0;
-		float min_dis = FLT_MAX;
+		float min_dis = MAXFLOAT;
 		vector<int> accomadatable_seqs;
 		
 		//先找到所有可容纳当前请求的服务器型号
@@ -333,7 +333,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		}
 		else{
 			//找一个部署后cpu内存比可以变得更均衡的节点
-			float min_dis = FLT_MAX;
+			float min_dis = MAXFLOAT;
 			uint32_t min_idx = 0;
 			C_BoughtServer* s = nullptr;
 			for(uint32_t i = 0; i != accomdatable_nodes.size(); ++i){
@@ -407,7 +407,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		}
 		else{
 			C_BoughtServer* p_best_server;
-			float min_dis = FLT_MAX;
+			float min_dis = MAXFLOAT;
 			for(uint32_t i = 0; i != acc_servers.size(); ++i){
 				float cur_dis = pow(vm.cpu_num - acc_servers[i]->A->remaining_cpu_num - acc_servers[i]->B->remaining_cpu_num, 2) + 
 								pow(vm.mem_num - acc_servers[i]->A->remaining_mem_num - acc_servers[i]->B->remaining_mem_num, 2);
@@ -428,8 +428,7 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 	}
 }
 
-
-
+//随机购买
 map<uint32_t, S_DeploymentInfo> buy_server(const vector<map<const S_Request*, uint32_t>::iterator>& batch_requests, map<string, vector<uint32_t>>& bought_server_kind, int32_t t) {
 
 	//找到一台服务器
@@ -439,7 +438,7 @@ map<uint32_t, S_DeploymentInfo> buy_server(const vector<map<const S_Request*, ui
 		int32_t required_mem = VMList[batch_requests[n]->first->vm_type].mem_num;
 
 		int min_idx = 0;
-		float min_dis = FLT_MAX;
+		float min_dis = MAXFLOAT;
 		vector<int> accomadatable_seqs;
 
 		//先找到所有可容纳当前请求的服务器型号
@@ -491,20 +490,18 @@ map<uint32_t, S_DeploymentInfo> buy_server(const vector<map<const S_Request*, ui
 
 	map<uint32_t, S_DeploymentInfo> results;
 
-	int32_t rand_times = 0;
 	for(int32_t i = 0; i != batch_requests.size(); ){
 		S_DeploymentInfo one_deployment_info;
 		if(best_fit(*(batch_requests[i]->first), one_deployment_info)){
 			results.emplace(batch_requests[i]->second, one_deployment_info);
-			++i;
-			rand_times = 0;
+			++i;	
 			continue;
 		}
 
 		//不能部署时，随机买一台服务器
 		cur_bought_server_idx = rand()%size;
 
-		if(++rand_times == 3){
+		if(rand() % 10 > 7){
 			cur_bought_server_idx = i;
 		}
 
@@ -530,8 +527,6 @@ map<uint32_t, S_DeploymentInfo> buy_server(const vector<map<const S_Request*, ui
 
 	return results;
 }
-
-
 
 //  //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
 void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balance){
@@ -705,7 +700,6 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 
  }
 
-
 //  //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
 void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 	int32_t remaining_migrate_vm_num = get_max_migrate_num();//当天可用迁移量
@@ -806,7 +800,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 			in_double_node_region.erase(fake_it);
 			delete fake_server; 
 
-			float min_dis = FLT_MAX;
+			float min_dis = MAXFLOAT;
 			C_BoughtServer * best_s = nullptr;
 			for(int32_t i = 0; i != acc_servers.size(); ++i){
 				float cur_dis = pow(vm.cpu_num - acc_servers[i]->A->remaining_cpu_num - acc_servers[i]->B->remaining_cpu_num, 2) + 
@@ -881,7 +875,7 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 			in_single_node_region.erase(fake_it);
 			delete fake_node; 
 
-			float min_dis = FLT_MAX;
+			float min_dis = MAXFLOAT;
 			int32_t min_idx = 0;
 			for(int32_t i = 0; i != acc_nodes.size(); ++i){
 				C_BoughtServer *cur_s = My_servers[acc_nodes[i]->second];
@@ -924,7 +918,6 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
 void process() {
 	srand((unsigned)time(NULL));
 	for(int32_t t = 0; t != T; ++t){
-		cout << "day" <<t<< endl;
 		S_DayTotalDecisionInfo day_decision;
 
 		const S_DayRequest& day_request = Requests[t];
@@ -1049,27 +1042,15 @@ void process() {
 		write_standard_output(day_decision);
 		#endif
 
-		
+		#ifndef SUBMIT
+		cout<<"第"<<t<<"天,"<<"共有"<<My_servers.size()<<"台服务器"<<endl;
+		#endif
 		if(t < T - K){
 			read_one_request();
 		}
+
 	}
-	/*
-	freopen("bought_server_ids.txt", "w", stdout);
-	
-	for (int32_t i = 0; i != T; ++i) {
-		std::cout << "(purchase, " << day_decision.Q << ")" << endl;
-		for (map<string, vector<uint32_t>>::iterator iter = day_decision.server_bought_kind.begin(); iter != day_decision.server_bought_kind.end(); ++iter) {
-			std::cout << "(" << iter->first << ", " << iter->second.size() << ")" << endl;
-			for (int j = 0; j != iter->second.size(); ++j) {
-				std::cout << "server type:" << iter->first << "	" << "server seq:" << iter->second[j] << "   " << "server id:" << GlobalServerSeq2IdMapTable[iter->second[j]] << endl;
-			}
-		}
-	}*/
-
 }
-
-
 
 int main()
 {	
