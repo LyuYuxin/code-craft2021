@@ -22,7 +22,7 @@ int32_t M;//虚拟机类型数量
 int32_t T;//总共T天
 int32_t K;//先给K天
 int32_t inf_num = 1;
-vector<float> average_delete_nums;
+
 vector<S_Server> ServerList;//用于存储所有可买的服务器种类信息
 unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
 vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
@@ -613,15 +613,7 @@ void process() {
 		#ifdef MIGRATE
 		//根据当天的请求是单节点多还是双节点多来判断是要做节点均衡还是不均衡
 		bool is_inf = false;
-		if(t == 0){
-			average_delete_nums.emplace_back(Requests[0].delete_op_idxs.size() - 1);
-		}
-		else{
-			average_delete_nums.emplace_back((Requests[t].delete_op_idxs.size() + average_delete_nums[t - 1] * (t - 1)) / t);
-
-		}
-
-		if(t > 1 && inf_num > 0 && (Requests[t - 1].delete_op_idxs.size() - 1) > 10 * average_delete_nums[t - 2]){
+		if(t > 1 && inf_num > 0 && Requests[t - 1].request_num > 20 * Requests[t - 2].request_num){
 			--inf_num;
 			is_inf = true;
 		}
@@ -733,9 +725,7 @@ void process() {
 
 		#ifndef SUBMIT
 		std::cout<<"第"<<t<<"天，共有"<<My_servers.size()<<"台服务器"<< "    ";
-		std::cout<<"迁移了"<<day_decision.W<<"台虚拟机"<<"    ";
-		std::cout<<"当天共有" << day_request.delete_op_idxs.size() - 1<< "个删除请求"<<"   ";
-		std::cout<<"到当天为止的平均删除数目为"<<average_delete_nums[t]<<endl;
+		std::cout<<"迁移了"<<day_decision.W<<"台服务器"<<endl;
 		#endif
 		
 		if(t < T - K){
