@@ -1,5 +1,5 @@
 #include"head.h"
-			
+
 extern int32_t N;//可以采购的服务器类型
 extern int32_t M;//虚拟机类型数量
 extern int32_t T;//总共T天
@@ -20,7 +20,7 @@ extern unordered_map<uint32_t, S_VM> GlobalVMRequestInfo;//全局VMadd请求表�
 
 int32_t C_BoughtServer::purchase_seq_num = 0;//初始时，没有任何服务器，序列号从0开始，第一台服务器序列号为0
 
-C_BoughtServer::C_BoughtServer(const S_Server& server) :server_info(server)
+C_BoughtServer::C_BoughtServer(const S_Server& server) :server_info(server), total_resource_used_rate(0)
 {
 	seq = purchase_seq_num++;
 	A = new(C_node)(server);

@@ -1,14 +1,12 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include "head.h"
 
 //可调参数列表
 
 //最大迁出服务器比例
-const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.6;
+const float MAX_MIGRATE_OUT_SERVER_RATIO = 0.6f;
 
 //购买服务器参数
-const float TOTAL_COST_RATIO = 0.00055f; 
+const float TOTAL_COST_RATIO =0.00055f; 
 
 //判断虚拟机是否平衡
 const float BALANCE_THRESHOLD = 0.3f;
@@ -23,6 +21,8 @@ int32_t N;//可以采购的服务器类型
 int32_t M;//虚拟机类型数量
 int32_t T;//总共T天
 int32_t K;//先给K天
+int32_t inf_num = 1;
+vector<float> average_delete_nums;
 vector<S_Server> ServerList;//用于存储所有可买的服务器种类信息
 unordered_map<string, S_VM> VMList;//用于存储所有虚拟机种类信息
 vector<S_DayRequest> Requests;//用于存储用户所有的请求信息
@@ -272,9 +272,11 @@ void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<u
 			//容量差距
 			float vol_dis = sqrt(ServerList[i].cpu_num - required_cpu) + sqrt(ServerList[i].mem_num - required_mem);
 			//服务器成本
-			float purchase_cost =  (T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost;
+			float purchase_cost = (T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost;
+			//float purchase_cost = ((T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost) / (ServerList[i].mem_num + ServerList[i].cpu_num);
+
 			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost;
-			
+
 			if(total_dis < min_dis){
 				min_dis = total_dis;
 				min_idx = i;
@@ -301,6 +303,7 @@ void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<u
 		}
 
 }
+
 
 //使用best fit 来部署
 inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deployment_info){
@@ -340,11 +343,6 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 				s = My_servers[accomdatable_nodes[i]->second];
 				float cur_dis = pow(vm.mem_num - s->A->remaining_mem_num - s->B->remaining_mem_num, 2) +
 							pow(vm.cpu_num - s->A->remaining_cpu_num - s->B->remaining_cpu_num, 2);
-				
-				// float cur_div_val = static_cast<float>(accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num) / (accomdatable_nodes[i]->remaining_mem_num - vm.mem_num);
-				// float div_dis = abs(cur_div_val - 1.0f);
-				// float cur_dis =  (accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num)* div_dis + pow(accomdatable_nodes[i]->remaining_cpu_num - vm.cpu_num, 2) + pow(accomdatable_nodes[i]->remaining_mem_num - vm.mem_num, 2);
-
 
 				if(cur_dis < min_dis){
 					min_dis = cur_dis;
@@ -428,110 +426,16 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 	}
 }
 
-//随机购买
-map<uint32_t, S_DeploymentInfo> buy_server(const vector<map<const S_Request*, uint32_t>::iterator>& batch_requests, map<string, vector<uint32_t>>& bought_server_kind, int32_t t) {
-
-	//找到一台服务器
-	vector<int32_t>best_server_idxs;
-	for(int32_t n = 0; n != batch_requests.size(); ++n){
-		int32_t required_cpu = VMList[batch_requests[n]->first->vm_type].cpu_num;
-		int32_t required_mem = VMList[batch_requests[n]->first->vm_type].mem_num;
-
-		int min_idx = 0;
-		float min_dis = MAXFLOAT;
-		vector<int> accomadatable_seqs;
-
-		//先找到所有可容纳当前请求的服务器型号
-		for(size_t i = 0; i != ServerList.size(); ++i){
-			if((ServerList[i].cpu_num / 2 >= required_cpu) and (ServerList[i].mem_num / 2 >= required_mem)){
-				accomadatable_seqs.emplace_back(i);
-			}
-		}
-
-
-		//综合考虑价格和容量差，选择一台服务器
-		for(size_t i = 0; i != accomadatable_seqs.size(); ++i){
-			//容量差距
-			float vol_dis = sqrt(ServerList[i].cpu_num - required_cpu) + sqrt(ServerList[i].mem_num - required_mem);
-			//服务器成本
-			float purchase_cost =  (T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost;
-			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost;
-			if(total_dis < min_dis){
-				min_dis = total_dis;
-				min_idx = i;
-			}
-		}
-		best_server_idxs.emplace_back(accomadatable_seqs[min_idx]);
-	}
-
-	uint32_t size = best_server_idxs.size();
-	
-	//先随机购买一台服务器
-	int32_t cur_bought_server_idx = rand()%size;
-
-	const S_Server& server =  ServerList[best_server_idxs[cur_bought_server_idx]];
-	C_BoughtServer *p_bought_server = new C_BoughtServer(server);
-
-	//更新三个表
-	My_servers.emplace_back(p_bought_server);
-	SingleNodeTable.emplace(p_bought_server->A, p_bought_server->seq);
-	SingleNodeTable.emplace(p_bought_server->B, p_bought_server->seq);
-	DoubleNodeTable.emplace(p_bought_server, p_bought_server->seq);
-
-	//记录购买了哪种服务器，并更新相应决策记录
-	if (bought_server_kind.find(server.type) != bought_server_kind.end()) {
-		bought_server_kind[server.type].emplace_back(p_bought_server->seq);
-	}
-	else {
-		vector<uint32_t> bought_server_seq_nums;
-		bought_server_seq_nums.emplace_back(p_bought_server->seq);
-		bought_server_kind.emplace(pair<string, vector<uint32_t>>(server.type, bought_server_seq_nums));
-	}
-
-	map<uint32_t, S_DeploymentInfo> results;
-
-	for(int32_t i = 0; i != batch_requests.size(); ){
-		S_DeploymentInfo one_deployment_info;
-		if(best_fit(*(batch_requests[i]->first), one_deployment_info)){
-			results.emplace(batch_requests[i]->second, one_deployment_info);
-			++i;	
-			continue;
-		}
-
-		//不能部署时，随机买一台服务器
-		cur_bought_server_idx = rand()%size;
-
-		if(rand() % 10 > 7){
-			cur_bought_server_idx = i;
-		}
-
-		const S_Server& server =  ServerList[best_server_idxs[cur_bought_server_idx]];
-		p_bought_server = new C_BoughtServer(server);
-
-		//更新三个表
-		My_servers.emplace_back(p_bought_server);
-		SingleNodeTable.emplace(p_bought_server->A, p_bought_server->seq);
-		SingleNodeTable.emplace(p_bought_server->B, p_bought_server->seq);
-		DoubleNodeTable.emplace(p_bought_server, p_bought_server->seq);
-	
-		//记录购买了哪种服务器，并更新相应决策记录
-		if (bought_server_kind.find(server.type) != bought_server_kind.end()) {
-			bought_server_kind[server.type].emplace_back(p_bought_server->seq);
-		}
-		else {
-			vector<uint32_t> bought_server_seq_nums;
-			bought_server_seq_nums.emplace_back(p_bought_server->seq);
-			bought_server_kind.emplace(pair<string, vector<uint32_t>>(server.type, bought_server_seq_nums));
-		}
-	}
-
-	return results;
-}
 
 //  //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
-void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balance){
+void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool is_inf){
+
 	int32_t remaining_migrate_vm_num = get_max_migrate_num();//当天可用迁移量
 	if(remaining_migrate_vm_num == 0) return;
+
+	if(is_inf){
+		remaining_migrate_vm_num = GlobalVMDeployTable.size();
+	}
 
 	//根据单节点表对所有节点上的单节点部署虚拟机进行迁移
 	int32_t max_out = 2 * static_cast<int32_t>(My_servers.size() * MAX_MIGRATE_OUT_SERVER_RATIO);	//查看的单节点个数
@@ -700,237 +604,30 @@ void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool do_balan
 
  }
 
-//  //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
-void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision){
-	int32_t remaining_migrate_vm_num = get_max_migrate_num();//当天可用迁移量
-	if(remaining_migrate_vm_num == 0) return;
-
-	int32_t max_server_migrate_num = MAX_MIGRATE_OUT_SERVER_RATIO * My_servers.size();
-
-	int32_t max_in_server_num = My_servers.size() - max_server_migrate_num;
-	if(max_server_migrate_num == 0 or max_in_server_num == 0)return;
-
-	map<C_BoughtServer*, uint32_t, less_DoubleNode> out_region;
-	map<C_BoughtServer*, uint32_t, less_DoubleNode> in_double_node_region;
-	map<C_node*, uint32_t, less_SingleNode> in_single_node_region;
-
-	int32_t in_server_num = 0; 
-	map<C_BoughtServer*, uint32_t>::iterator it = DoubleNodeTable.begin();
-	
-	while(in_server_num  < max_in_server_num){
-		in_double_node_region.emplace(it->first, it->second);
-		in_single_node_region.emplace(it->first->A, it->second);
-		in_single_node_region.emplace(it->first->B, it->second);
-		++in_server_num;
-		++it;
-	}
-
-	while(it != DoubleNodeTable.end()){
-		out_region.emplace(it->first, it->second);
-		++it;
-	}
-
-	//存储所有迁出的虚拟机
-	map<const S_DeploymentInfo *, uint32_t, less_SingleNode1> waiting_out_vms;
-	it = out_region.begin();
-	for(;it != out_region.end(); ++it){
-		set<C_VM_Entity>::iterator j = it->first->A->double_node_deploy_table.begin();
-		set<C_VM_Entity>::iterator end = it->first->A->double_node_deploy_table.end();
-		for(;j != end; ++j){
-			waiting_out_vms.emplace(&GlobalVMDeployTable[j->vm_id], j->vm_id);
-		}
-		
-		j = it->first->A->single_node_deploy_table.begin();
-		end = it->first->A->single_node_deploy_table.end();
-		for(;j != end; ++j){
-			waiting_out_vms.emplace(&GlobalVMDeployTable[j->vm_id], j->vm_id);
-		}
-
-		j = it->first->B->single_node_deploy_table.begin();
-		end = it->first->B->single_node_deploy_table.end();
-		for(;j != end; ++j){
-			waiting_out_vms.emplace(&GlobalVMDeployTable[j->vm_id],j->vm_id);
-		}
-	}
-
-	map<const S_DeploymentInfo *, uint32_t>::iterator out_it = waiting_out_vms.begin();
-	map<const S_DeploymentInfo *, uint32_t>::iterator out_end = waiting_out_vms.end();
-
-	for(;out_it != out_end;){
-		const S_VM & vm = *(out_it->first->vm_info);
-		if(vm.is_double_node){
-			C_BoughtServer * fake_server = new C_BoughtServer(vm);
-			//将这个假节点插入到单节点表中，然后以其位置为基准，向右(剩余节点容量升序)寻找最接近的节点
-			in_double_node_region.emplace(fake_server, 0);
-			map<C_BoughtServer*, uint32_t>::iterator fake_it = in_double_node_region.find(fake_server);
-			map<C_BoughtServer*, uint32_t>::iterator right_it = fake_it;
-
-			vector<C_BoughtServer *> acc_servers;
-			while(++right_it != in_double_node_region.end()){
-				if(right_it->first->A->remaining_cpu_num >= vm.half_cpu_num &&
-				right_it->first->B->remaining_cpu_num >= vm.half_cpu_num&&
-				right_it->first->A->remaining_mem_num >= vm.half_mem_num&&
-				right_it->first->B->remaining_mem_num >= vm.half_mem_num){
-					acc_servers.emplace_back(right_it->first);
-					}
-			}
-			if(acc_servers.size() == 0){
-				in_double_node_region.erase(fake_it);
-				delete fake_server;
-
-				//将此不可容纳的虚拟机所在服务器从迁出区加入迁入区	
-				C_BoughtServer* s = out_it->first->server;
-				in_double_node_region.emplace(s, s->seq);
-				in_single_node_region.emplace(s->A, s->seq);
-				in_single_node_region.emplace(s->B, s->seq);
-				
-				//将与此虚拟机同服务器的其他虚拟机从waitingList中删除
-
-				map<const S_DeploymentInfo *, uint32_t>::iterator delete_it = out_it;
-				for(;delete_it != waiting_out_vms.end(); ){
-					if(delete_it->first->server != s){
-						break;
-					}
-					waiting_out_vms.erase(delete_it++);
-				}
-				out_it = waiting_out_vms.begin();
-			}
-			else{
-			
-			in_double_node_region.erase(fake_it);
-			delete fake_server; 
-
-			float min_dis = MAXFLOAT;
-			C_BoughtServer * best_s = nullptr;
-			for(int32_t i = 0; i != acc_servers.size(); ++i){
-				float cur_dis = pow(vm.cpu_num - acc_servers[i]->A->remaining_cpu_num - acc_servers[i]->B->remaining_cpu_num, 2) + 
-								pow(vm.mem_num - acc_servers[i]->A->remaining_mem_num - acc_servers[i]->B->remaining_mem_num, 2);
-				if(cur_dis < min_dis){
-					min_dis = cur_dis;
-					best_s = acc_servers[i];
-				}
-			}
-
-			C_BoughtServer * in_s = best_s;
-			in_double_node_region.erase(in_s);
-			in_single_node_region.erase(in_s->A);
-			in_single_node_region.erase(in_s->B);
-			//对此虚拟机进行迁移
-			S_MigrationInfo one_migration_info;
-			migrate_vm((out_it)->second, in_s->seq, one_migration_info);
-			day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-
-			//维护迁入表和waitingList
-			in_double_node_region.emplace(in_s, in_s->seq);
-			in_single_node_region.emplace(in_s->A, in_s->seq);
-			in_single_node_region.emplace(in_s->B, in_s->seq);
-			waiting_out_vms.erase(out_it++);
-
-			//迁移数目－1
-			--remaining_migrate_vm_num;
-
-			if(remaining_migrate_vm_num == 0)return;
-			continue;
-		}
-		}
-	
-		else if(!vm.is_double_node){
-			C_node * fake_node = new C_node(vm);
-			//将这个假节点插入到单节点表中，然后以其位置为基准，向右(剩余节点容量升序)寻找最接近的节点
-			in_single_node_region.emplace(fake_node, 0);
-			map<C_node*, uint32_t>::iterator fake_it = in_single_node_region.find(fake_node);
-			map<C_node*, uint32_t>::iterator right_it = fake_it;
-
-			vector<map<C_node*, uint32_t>::iterator> acc_nodes;
-			while(++right_it != in_single_node_region.end()){
-				if(right_it->first->remaining_cpu_num >= vm.cpu_num &&
-				right_it->first->remaining_mem_num >= vm.mem_num){
-					acc_nodes.emplace_back(right_it);
-					}
-			}
-			if(acc_nodes.size() == 0){
-				in_single_node_region.erase(fake_it);
-				delete fake_node;
-
-				//将此不可容纳的虚拟机所在服务器从迁出区加入迁入区	
-				C_BoughtServer* s = out_it->first->server;
-				in_double_node_region.emplace(s, s->seq);
-				in_single_node_region.emplace(s->A, s->seq);
-				in_single_node_region.emplace(s->B, s->seq);
-				
-				//将与此虚拟机同服务器的其他虚拟机从waitingList中删除
-
-				map<const S_DeploymentInfo *,uint32_t>::iterator delete_it = out_it;
-				for(;delete_it != waiting_out_vms.end(); ){
-					if(delete_it->first->server != s){
-						break;
-					}
-					waiting_out_vms.erase(delete_it++);
-
-				}
-				out_it = waiting_out_vms.begin();
-				}
-			else{
-			
-			in_single_node_region.erase(fake_it);
-			delete fake_node; 
-
-			float min_dis = MAXFLOAT;
-			int32_t min_idx = 0;
-			for(int32_t i = 0; i != acc_nodes.size(); ++i){
-				C_BoughtServer *cur_s = My_servers[acc_nodes[i]->second];
-				float cur_dis = pow(vm.cpu_num - cur_s->A->remaining_cpu_num - cur_s->B->remaining_cpu_num, 2) + 
-								pow(vm.mem_num - cur_s->A->remaining_mem_num - cur_s->B->remaining_mem_num, 2);
-				if(cur_dis < min_dis){
-					min_dis = cur_dis;
-					min_idx = i;
-				}
-			}
-
-			C_BoughtServer * in_s = My_servers[acc_nodes[min_idx]->second];
-
-			C_node* in_node = acc_nodes[min_idx]->first;
-			in_double_node_region.erase(in_s);
-			in_single_node_region.erase(acc_nodes[min_idx]);
-			//对此虚拟机进行迁移
-			S_MigrationInfo one_migration_info;
-			migrate_vm((out_it)->second, in_s->seq, one_migration_info, in_node);
-			day_decision.VM_migrate_vm_record.emplace_back(one_migration_info);
-
-			//维护迁入表和waitingList
-			in_double_node_region.emplace(in_s, in_s->seq);
-			in_single_node_region.emplace(in_s->A, in_s->seq);
-			waiting_out_vms.erase(out_it++);
-
-			//迁移数目－1
-			--remaining_migrate_vm_num;
-
-			if(remaining_migrate_vm_num == 0)return;
-			continue;
-		}
-		}
-	
-	}
-
-}
-
 //主流程
 void process() {
-	srand((unsigned)time(NULL));
 	for(int32_t t = 0; t != T; ++t){
 		S_DayTotalDecisionInfo day_decision;
 
 		const S_DayRequest& day_request = Requests[t];
 		#ifdef MIGRATE
 		//根据当天的请求是单节点多还是双节点多来判断是要做节点均衡还是不均衡
-		int32_t double_node_add_num = 0;
-		int32_t add_request_num = 0;
-		bool do_balance = false;
+		bool is_inf = false;
+		if(t == 0){
+			average_delete_nums.emplace_back(Requests[0].delete_op_idxs.size() - 1);
+		}
+		else{
+			average_delete_nums.emplace_back((Requests[t].delete_op_idxs.size() + average_delete_nums[t - 1] * (t - 1)) / t);
 
+		}
+
+		if(t > 1 && inf_num > 0 && (Requests[t - 1].delete_op_idxs.size() - 1) > 10 * average_delete_nums[t - 2]){
+			--inf_num;
+			is_inf = true;
+		}
 
 		//对存量虚拟机进行迁移
-		full_loaded_migrate_vm(day_decision, do_balance);
-
+		full_loaded_migrate_vm(day_decision, is_inf);
 		day_decision.W = day_decision.VM_migrate_vm_record.size();
 		#endif
 
@@ -981,7 +678,6 @@ void process() {
 				map<const S_Request*, uint32_t>::iterator it = tmp_request_list.begin();
 				map<const S_Request*, uint32_t>::iterator end = tmp_request_list.end();
 				
-				vector<map<const S_Request*, uint32_t>::iterator> waiting_list;
 				map<uint32_t, S_DeploymentInfo> batch_deployment_info;//按序记录当前batch的部署信息
 				for(;it != end; ++it){
 					//不断处理请求，直至已有服务器无法满足
@@ -993,23 +689,16 @@ void process() {
 						batch_deployment_info.emplace(it->second, one_request_deployment_info);
 						continue;
 					};
-					waiting_list.emplace_back(it);
-					// const S_VM& vm = VMList[one_request.vm_type];
+
+					const S_VM& vm = VMList[one_request.vm_type];
 
 					//根据所需cpu and mem,购买服务器
-					// buy_server(vm.cpu_num, vm.mem_num, day_decision.server_bought_kind, t);
+					buy_server(vm.cpu_num, vm.mem_num, day_decision.server_bought_kind, t);
 					
-					// best_fit(one_request, one_request_deployment_info);//购买服务器后重新处理当前请求
-					// batch_deployment_info.emplace(it->second, one_request_deployment_info);
+					best_fit(one_request, one_request_deployment_info);//购买服务器后重新处理当前请求
+					batch_deployment_info.emplace(it->second, one_request_deployment_info);
 				}
-				if(waiting_list.size() != 0){
-					map<uint32_t, S_DeploymentInfo> tmp_deployment_info = buy_server(waiting_list, day_decision.server_bought_kind, t);
-					for(map<uint32_t, S_DeploymentInfo>::iterator i = tmp_deployment_info.begin(); i != tmp_deployment_info.end(); ++i){
-						batch_deployment_info.emplace(i->first, i->second);
-					}
-				}				
-
-
+				
 				if(batch_num != day_request.delete_op_idxs.size() - 1){
 					//处理一个删除请求
 					const S_Request & one_request = day_request.day_request.at(day_request.delete_op_idxs[batch_num]);
@@ -1043,14 +732,32 @@ void process() {
 		#endif
 
 		#ifndef SUBMIT
-		cout<<"第"<<t<<"天,"<<"共有"<<My_servers.size()<<"台服务器"<<endl;
+		std::cout<<"第"<<t<<"天，共有"<<My_servers.size()<<"台服务器"<< "    ";
+		std::cout<<"迁移了"<<day_decision.W<<"台虚拟机"<<"    ";
+		std::cout<<"当天共有" << day_request.delete_op_idxs.size() - 1<< "个删除请求"<<"   ";
+		std::cout<<"到当天为止的平均删除数目为"<<average_delete_nums[t]<<endl;
 		#endif
+		
 		if(t < T - K){
 			read_one_request();
 		}
-
 	}
+	/*
+	freopen("bought_server_ids.txt", "w", stdout);
+	
+	for (int32_t i = 0; i != T; ++i) {
+		std::cout << "(purchase, " << day_decision.Q << ")" << endl;
+		for (map<string, vector<uint32_t>>::iterator iter = day_decision.server_bought_kind.begin(); iter != day_decision.server_bought_kind.end(); ++iter) {
+			std::cout << "(" << iter->first << ", " << iter->second.size() << ")" << endl;
+			for (int j = 0; j != iter->second.size(); ++j) {
+				std::cout << "server type:" << iter->first << "	" << "server seq:" << iter->second[j] << "   " << "server id:" << GlobalServerSeq2IdMapTable[iter->second[j]] << endl;
+			}
+		}
+	}*/
+
 }
+
+
 
 int main()
 {	

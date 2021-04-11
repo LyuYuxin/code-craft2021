@@ -1,5 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #pragma once
 #include<cstdlib>
 #include<cstdio>
@@ -15,9 +13,12 @@
 #include<queue>
 #include<set>
 #include<random>
+#define _CRT_SECURE_NO_WARNINGS
 
 #define SUBMIT//是否提交
 #define MIGRATE//是否迁移
+//#define EARLY_STOPPING//是否迁移时短路判断 
+//#define DO_NODE_BALANCE
 
 
 using namespace std;
@@ -227,8 +228,8 @@ struct less_SingleNode
 {
 	bool operator()(const C_node* p_Left, const C_node* p_Right) const
 	{
-		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_mem_num);
-		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_mem_num);
+		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_mem_num) + 0.001 * (1 / (1 + p_Left->get_total_used_rate()));
+		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_mem_num)  + 0.001 * (1 / (1 + p_Right->get_total_used_rate()));
 
 		if (abs(l - r) > 1e-7) {
 			return l < r;
@@ -239,6 +240,23 @@ struct less_SingleNode
 };
 
 
+
+// template<class _Ty>
+// struct less_SingleNode
+// {
+// 	bool operator()(const _Ty& p_Left, const _Ty& p_Right) const
+// 	{
+// 		float l = sqrt(p_Left->remaining_cpu_num) + sqrt(p_Left->remaining_mem_num);
+// 		float r = sqrt(p_Right->remaining_cpu_num) + sqrt(p_Right->remaining_mem_num);
+
+// 		if (abs(l - r) > 1e-7) {
+// 			return l < r;
+// 		}
+// 		return p_Left < p_Right;
+
+// 	}
+// };
+
 //单个虚拟机部署信息
 typedef struct {
 	uint32_t server_seq;//部署的服务器seq
@@ -246,29 +264,6 @@ typedef struct {
 	string node_name; //部署的节点名称
 	const S_VM* vm_info;//部署的虚拟机参数
 }S_DeploymentInfo;
-
-
-struct less_SingleNode1
-{
-	bool operator()(const S_DeploymentInfo * p_Left, const S_DeploymentInfo * p_Right) const
-	{
-
-		if(p_Left->server == p_Right->server){
-			if(p_Left->vm_info->is_double_node and !p_Right->vm_info->is_double_node){
-				return true;
-			}
-			else if(!p_Left->vm_info->is_double_node and p_Right->vm_info->is_double_node){
-				return false;
-			}
-			else{
-				return p_Left->vm_info->cpu_num + p_Left->vm_info->mem_num > p_Right->vm_info->mem_num + p_Right->vm_info->cpu_num; 
-			}
-		}
-		return p_Left->server < p_Right->server;
-
-	}
-};
-
 
 //一天的决策信息, 用于记录所有操作并输出
 typedef struct DayTotalDecisionInfo {
