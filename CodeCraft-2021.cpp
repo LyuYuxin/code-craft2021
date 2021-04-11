@@ -249,6 +249,18 @@ void removeVM(uint32_t vm_id, uint32_t server_seq) {
 		GlobalVMDeployTable.erase(vm_id);
 	}
 
+
+float get_t_c_div_m(int t){
+	float cpu_num = 0;
+	float mem_num = 0;
+	for(int i = 0; i != K; ++i){
+		cpu_num += Requests[t + i].total_cpu;
+		mem_num += Requests[t + i].total_mem;		
+	}
+	return cpu_num / mem_num;
+}
+
+
 //综合容量、价格购买
 void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<uint32_t>>& bought_server_kind, int32_t t) {
 
@@ -274,8 +286,9 @@ void buy_server(int32_t required_cpu, int32_t required_mem, map<string, vector<u
 			//服务器成本
 			float purchase_cost = (T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost;
 			//float purchase_cost = ((T - t) * ServerList[accomadatable_seqs[i]].maintenance_cost + ServerList[accomadatable_seqs[i]].purchase_cost) / (ServerList[i].mem_num + ServerList[i].cpu_num);
-
-			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost;
+			float average_c_div_m = get_t_c_div_m(t);
+			float balance_cost = abs((ServerList[accomadatable_seqs[i]].cpu_num) / (ServerList[accomadatable_seqs[i]].mem_num) - average_c_div_m);
+			float total_dis = vol_dis + TOTAL_COST_RATIO * purchase_cost +  balance_cost;
 
 			if(total_dis < min_dis){
 				min_dis = total_dis;
@@ -425,7 +438,6 @@ inline bool best_fit(const S_Request & request, S_DeploymentInfo & one_deploymen
 		}
 	}
 }
-
 
 //  //迁移主流程，只进行服务器间迁移，适配最佳适应算法，将服务器资源利用率拉满
 void full_loaded_migrate_vm(S_DayTotalDecisionInfo & day_decision, bool is_inf){

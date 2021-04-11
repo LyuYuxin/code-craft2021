@@ -66,6 +66,8 @@ typedef struct S_Request {
 typedef struct {
 	uint32_t request_num;
 	vector<S_Request> day_request;
+	int32_t total_cpu;
+	int32_t total_mem;
 	vector<int> delete_op_idxs;//用于记录删除操作的索引
 }S_DayRequest;
 
@@ -450,7 +452,8 @@ inline void read_standard_input() {
 		std::cin.get();
 		S_DayRequest day_request;
 		day_request.request_num = day_request_num;
-
+		day_request.total_cpu = 0;
+		day_request.total_mem = 0;
 		for (int32_t j = 0; j != day_request_num; ++j) {
 			getline(std::cin, line);
 			S_Request one_request;
@@ -460,7 +463,9 @@ inline void read_standard_input() {
 				one_request.vm_type = results[1].erase(0, 1);
 				one_request.vm_id = stoi(results[2]);
 				GlobalVMRequestInfo.emplace(one_request.vm_id, VMList[one_request.vm_type]);
-			}
+				day_request.total_mem += VMList[one_request.vm_type].mem_num;
+				day_request.total_cpu += VMList[one_request.vm_type].cpu_num;
+				}
 			else {
 				one_request.is_add = false;
 				one_request.vm_id = stoi(results[1]);
